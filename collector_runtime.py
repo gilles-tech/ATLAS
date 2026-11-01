@@ -1,4 +1,4 @@
-"""Shared durable status and advisory collection lock (macOS/Linux)."""
+"""Shared durable status and advisory collection lock (Windows/macOS/Linux)."""
 import contextlib
 import json
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import signal
+import sys
 
 _held = threading.local()
 
@@ -38,11 +39,12 @@ def atomic_json(path, value):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        if os.name != 'nt':
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -60,7 +62,10 @@ def run_lock(database):
     crashes. The PID is diagnostic only, never grounds to delete a 'stale' lock.
     Reentrancy is limited to the owning thread and database.
     """
-    import fcntl
+    if os.name == 'nt':
+        import msvcrt
+    else:
+        import fcntl
     path = str(Path(database).resolve()) + '.collector.lock'
     held = getattr(_held, 'paths', set())
     if path in held:
@@ -69,17 +74,30 @@ def run_lock(database):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'a+', encoding='utf-8') as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            if os.name == 'nt':
+                handle.seek(0)
+                if handle.read(1) == '':
+                    handle.write('0')
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as exc:
             raise AlreadyRunning('A collector already owns this database') from exc
         held.add(path)
         _held.paths = held
         try:
-            handle.seek(0)
-            handle.truncate()
-            handle.write(str(os.getpid()) + '\n')
-            handle.flush()
+            if os.name != 'nt':
+                handle.seek(0)
+                handle.truncate()
+                handle.write(str(os.getpid()) + '\n')
+                handle.flush()
             yield
         finally:
             held.remove(path)
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            if os.name == 'nt':
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
