@@ -1,0 +1,125 @@
+{
+  "created_at": "2026-11-01T12:14:00.765893+00:00",
+  "scope": "Recovery implementation on uploaded source, not deployment to original Mac",
+  "source_baseline": "Installer Atlas Collector.app.zip; installed Mac source unavailable",
+  "tests": {
+    "command": "python3 -m unittest discover -p 'test_*.py' -v",
+    "exit_code": 0,
+    "passed": 41,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 2.02,
+    "output": "docs/recovery-tests.txt"
+  },
+  "other_checks": {
+    "py_compile": "passed",
+    "installer_shell_syntax": "passed",
+    "ui_and_readonly_api": "HTTP 200 for /, health, stats, forecast search and connectors; 94 records preserved",
+    "installer_zip": "built and contents/permissions/metadata validated; not run on macOS",
+    "native_DMG": "unbuilt: Linux host"
+  },
+  "fixture_run": {
+    "evidence": "docs/recovery-fixture-run.json",
+    "before": {},
+    "after": {
+      "BOAMP": 1,
+      "TED": 2
+    },
+    "ted_pages": 2,
+    "ted_received": 3,
+    "ted_valid": 3,
+    "ted_inserted_unique": 2,
+    "ted_updated_existing": 1,
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "live": false
+  },
+  "live_staging": {
+    "evidence": "docs/recovery-live-check.json",
+    "attempts": 1,
+    "page_limit": 1,
+    "row_limit": 2,
+    "total_budget_seconds": 20,
+    "request_budget_seconds": 15,
+    "retries": 0,
+    "pages_received": 0,
+    "inserted_unique": 0,
+    "updated_existing": 0,
+    "result": "error: TED connection/read failed",
+    "before": {},
+    "after": {},
+    "integrity_before_and_after": "SQLite and FTS5 ok",
+    "production_touched": false,
+    "query_semantics_verified": false
+  },
+  "cloud_database": {
+    "before_by_source": {
+      "APPROCH": 94,
+      "TED": 0,
+      "BOAMP": 0
+    },
+    "after_by_source": {
+      "APPROCH": 94,
+      "TED": 0,
+      "BOAMP": 0
+    },
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "method": "consistent temporary SQLite backup from source opened read-only"
+  },
+  "catalog": {
+    "entries": 83,
+    "enabled_feeds": 0,
+    "remote_connectors_verified_in_cloud": 0,
+    "spreadsheet_import_verified": true
+  },
+  "separate_connectors": {
+    "APPROCH": "100 spreadsheet rows -> 94 forecast projects; remote CSV parser not verified; prior remote faults reported in reference only",
+    "EU_FT_TENDERS": "remote parser not verified; prior fault in reference only",
+    "EU_FT_GRANTS": "remote parser not verified; prior fault in reference only",
+    "default_sync": "BOAMP and TED; optional adapters deferred, never marked successful"
+  },
+  "fts_findings": {
+    "confirmed": "Old external-content count comparison cannot establish index consistency; automatic startup rebuild removed; corruption fixture detected without repair",
+    "historical_root_cause": "Unproven; original Mac database/trigger history unavailable"
+  },
+  "mac_production": {
+    "database_available": false,
+    "named_backups_verified": false,
+    "pid_7200_verified_on_Mac": false,
+    "launchagent_state": "unknown: no Mac access; launchctl unavailable on Linux",
+    "scheduler_activated": false,
+    "wal_shm_manually_touched": false,
+    "database_counts": "not measured; historical 108346 count is reference-only"
+  },
+  "network": {
+    "current_policy": "restricted; required API hosts absent",
+    "draft_added_domains": [
+      "api.ted.europa.eu",
+      "boamp-datadila.opendatasoft.com",
+      "docs.ted.europa.eu"
+    ],
+    "draft_saved": true,
+    "runtime_application_verified": false,
+    "precise_connection_root_cause": "not proven by the failed request alone"
+  },
+  "scheduler_gate": {
+    "decision": "NO-GO",
+    "requirements": [
+      "Apply network settings and verify bounded live TED plus BOAMP collection",
+      "Confirm actual installed Mac source and gracefully stop its verified process",
+      "Confirm original backups and production baseline counts",
+      "Pass copied SQLite/FTS5 integrity checks before and after controlled run",
+      "Inspect status, exit codes, LaunchAgent interval 14400 and log paths before activation"
+    ]
+  },
+  "review": {
+    "diff": "docs/recovery.patch",
+    "source_hashes": "docs/recovery-hashes.json",
+    "installer": "release/Atlas-Collector-Recovery-v1-macOS-unsigned.zip",
+    "source_archive": "release/ATLAS-TED-recovery-source-v1.zip",
+    "artifact_hashes": "release/SHA256SUMS.txt",
+    "git_committed": false,
+    "git_pushed": false
+  }
+}

@@ -1,0 +1,1875 @@
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,3 +5,8 @@
+ *.db-shm
+ .local/
+ .venv/
++*.collector.lock
++build/
++dist/
++release/
++*.spec
+--- a/app.py
++++ b/app.py
+@@ -8,6 +8,8 @@
+ import sqlite3, json, os, re, threading, argparse, time, unicodedata, sys
+ import eu_ft
+ import approch
++from collector_runtime import AlreadyRunning, run_lock
++from functools import wraps
+ 
+ ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+ DB = Path(os.environ.get('ATLAS_DB', str(Path.home() / 'AtlasMarches' / 'data' / 'atlas.db'))).expanduser()
+@@ -15,6 +17,17 @@
+ SOURCES = json.loads((ROOT / 'sources.json').read_text(encoding='utf8'))
+ BUYERS = json.loads((ROOT / 'buyers.json').read_text(encoding='utf8'))
+ LOCK = threading.Lock()
++
++def collection_guard(function):
++    @wraps(function)
++    def guarded(*args, **kwargs):
++        try:
++            with run_lock(DB):
++                return function(*args, **kwargs)
++        except AlreadyRunning as exc:
++            return {'status': 'already_running', 'state': 'already_running', 'error': str(exc)}
++    return guarded
++
+ 
+ def connect():
+     c = sqlite3.connect(DB, timeout=30)
+@@ -36,7 +49,11 @@
+         CREATE INDEX IF NOT EXISTS ix_deadline ON opportunities(deadline);
+         CREATE TABLE IF NOT EXISTS bookmarks(id TEXT PRIMARY KEY);
+         CREATE TABLE IF NOT EXISTS runs(source TEXT, at TEXT, status TEXT, fetched INTEGER, message TEXT);''')
+-        # Content-linked FTS index. Kept current on every insert/update/delete.
++        # Counts on external-content FTS reflect the content table, not index health.
++        # Never repair/rebuild a production index as a side effect of startup.
++        has_fts = c.execute("SELECT 1 FROM sqlite_master WHERE name='opportunities_fts'").fetchone()
++        if not has_fts and c.execute('SELECT count(*) FROM opportunities').fetchone()[0]:
++            raise RuntimeError('Existing notices have no FTS index; validate a backup with maintenance.py first')
+         try:
+             c.executescript("""CREATE VIRTUAL TABLE IF NOT EXISTS opportunities_fts USING fts5(
+               title, description, buyer, cpv, content='opportunities', content_rowid='rowid',
+@@ -52,14 +69,13 @@
+               VALUES ('delete',old.rowid,old.title,old.description,old.buyer,old.cpv);
+               INSERT INTO opportunities_fts(rowid,title,description,buyer,cpv)
+               VALUES (new.rowid,new.title,new.description,new.buyer,new.cpv); END;""")
+-            current=c.execute('SELECT count(*) FROM opportunities').fetchone()[0]
+-            indexed=c.execute('SELECT count(*) FROM opportunities_fts').fetchone()[0]
+-            if current!=indexed:
+-                c.execute("INSERT INTO opportunities_fts(opportunities_fts) VALUES ('rebuild')")
+         except sqlite3.OperationalError as e:
+-            print('[Recherche] FTS indisponible, recherche standard conservée:',e)
+-
+-
++            if 'no such module: fts5' not in str(e).lower():
++                raise
++            print('[Recherche] FTS indisponible, recherche standard conservée:', e)
++
++
++@collection_guard
+ def eu_ft_ingest(kind):
+     try:
+         outcome=eu_ft.collect(connect,kind)
+@@ -339,131 +355,70 @@
+         time.sleep(delay)
+     return report
+ 
+-def ted_fetch(limit=None):
+-    """TED Search API v3: modest, valid first request, then cursor iteration.
+-
+-    If TED rejects a request, preserve the structured response body for diagnosis.
+-    """
+-    endpoint='https://api.ted.europa.eu/v3/notices/search'
+-    pages=max(1,min(100,int(os.getenv('ATLAS_TED_PAGES','12'))))
+-    since=(datetime.now(timezone.utc)-timedelta(days=max(1,int(os.getenv('ATLAS_TED_DAYS','14'))))).strftime('%Y%m%d')
+-    query='publication-date >= '+since
+-    # Start with conservative, documented fields; enrich in a later validated step.
+-    fields=['publication-number','publication-date','notice-title','buyer-name','classification-cpv','buyer-country','deadline-receipt-tender-date-lot','form-type','notice-type']
+-    token=None;out=[]
+-    for index in range(pages):
+-        size=min(100,max(1,limit-len(out))) if limit is not None else 100
+-        if limit is not None and len(out)>=limit:break
+-        body={'query':query,'fields':fields,'page':1,'limit':size,'scope':'ALL','checkQuerySyntax':False,'paginationMode':'ITERATION'}
+-        if token:body['iterationNextToken']=token
+-        req=Request(endpoint,data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':'AtlasMarches/0.4.1'},method='POST')
+-        try:
+-            payload=read_json(req,40)
+-        except HTTPError as error:
+-            detail=error.read(3000).decode('utf-8','replace')
+-            raise ValueError(f'TED HTTP {error.code}; query={query}; response={detail}') from error
+-        notices=payload.get('notices',payload.get('results'))
+-        if not isinstance(notices,list):raise ValueError('TED: format de réponse inattendu (notices)')
+-        for n in notices:
+-            if not isinstance(n,dict):continue
+-            number=ted_scalar(n.get('publication-number') or n.get('publicationNumber') or n.get('number'))
+-            if not number:continue
+-            title=ted_scalar(n.get('notice-title') or n.get('title'))
+-            buyer=ted_scalar(n.get('buyer-name'))
+-            country=ted_country(n)
+-            published=normalized_date(ted_scalar(n.get('publication-date')))
+-            deadline=normalized_date(ted_scalar(n.get('deadline-receipt-tender-date-lot')))
+-            notice_kind=ted_scalar(n.get('notice-type') or n.get('form-type'))
+-            form=ted_scalar(n.get('form-type')).lower()
+-            awarded=('result' in form or 'award' in form or 'result' in notice_kind.lower())
+-            expired=bool(deadline and deadline[:10]<datetime.now(timezone.utc).date().isoformat())
+-            stage='awarded' if awarded else 'expired' if expired else 'tender' if deadline else 'unknown'
+-            out.append({'id':'TED:'+number,'source':'TED','title':title or 'Avis TED '+number,'description':'','kind':notice_kind or 'AUTRE','country':country,'region':'','buyer':buyer,'cpv':ted_scalar(n.get('classification-cpv')),'value':None,'currency':'EUR','published':published,'deadline':deadline,'url':'https://ted.europa.eu/fr/notice/-/detail/'+number,'stage':stage,'raw':n})
+-        next_token=payload.get('iterationNextToken')
+-        if not notices or not next_token or next_token==token:break
+-        token=next_token
+-    return out
+-
+ # Full active-tender import: cursor iteration, durable batches and observable progress.
+ JOBS = {'TED': {'state':'idle','pages':0,'received':0,'saved':0,'total':None,'error':'','started':None}, 'BOAMP': {'state':'idle','pages':0,'received':0,'saved':0,'total':None,'error':'','started':None}}
+ JOB_LOCK = threading.Lock()
+ 
+-def save_batch(rows):
+-    if not rows: return 0
+-    now=datetime.now(timezone.utc).isoformat()
+-    with LOCK, connect() as c:
+-        for x in rows:
+-            c.execute('''INSERT INTO opportunities(id,source,title,description,kind,country,region,buyer,cpv,value,currency,published,deadline,url,stage,retrieved,raw)
+-              VALUES (:id,:source,:title,:description,:kind,:country,:region,:buyer,:cpv,:value,:currency,:published,:deadline,:url,:stage,:retrieved,:raw)
+-              ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,country=CASE WHEN excluded.country NOT IN ('UNKNOWN','EU','') THEN excluded.country ELSE opportunities.country END,region=excluded.region,buyer=excluded.buyer,cpv=excluded.cpv,deadline=excluded.deadline,published=excluded.published,kind=excluded.kind,stage=excluded.stage,url=excluded.url,retrieved=excluded.retrieved,raw=excluded.raw''',dict(x,retrieved=now,raw=json.dumps(x['raw'],ensure_ascii=False)))
+-    return len(rows)
+-
+-def ted_active_pages():
+-    # 'ACTIVE' is TED's current search scope; competition removes award notices.
+-    # Do not filter by publication date: a still-open tender may have been published months ago.
+-    endpoint='https://api.ted.europa.eu/v3/notices/search'
+-    fields=['publication-number','publication-date','notice-title','buyer-name','buyer-country','classification-cpv','deadline-receipt-tender-date-lot','form-type','notice-type']
+-    token=None; seen_tokens=set(); page=0
+-    max_pages=max(0,int(os.getenv('ATLAS_TED_MAX_PAGES','0'))) # 0 means all results
+-    while True:
+-        if max_pages and page>=max_pages:break
+-        body={'query':'form-type = competition','fields':fields,'limit':100,'scope':'ACTIVE','paginationMode':'ITERATION','checkQuerySyntax':False}
+-        if token:body['iterationNextToken']=token
+-        req=Request(endpoint,data=json.dumps(body).encode('utf-8'),headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':'AtlasMarches/0.5'},method='POST')
+-        for attempt in range(4):
+-            try:
+-                payload=read_json(req,60);break
+-            except HTTPError as error:
+-                detail=error.read(3500).decode('utf-8','replace')
+-                if error.code in (429,500,502,503,504) and attempt<3:
+-                    time.sleep(2**attempt);continue
+-                raise RuntimeError(f'TED HTTP {error.code}: {detail}') from error
+-            except (URLError,TimeoutError) as error:
+-                if attempt<3:time.sleep(2**attempt);continue
+-                raise RuntimeError(f'TED connexion: {error}') from error
+-        notices=payload.get('notices',payload.get('results',[]))
+-        if not isinstance(notices,list):raise ValueError('TED: champ notices manquant')
+-        rows=[]
+-        for n in notices:
+-            if not isinstance(n,dict):continue
+-            number=ted_scalar(n.get('publication-number') or n.get('publicationNumber'))
+-            if not number:continue
+-            date=normalized_date(ted_scalar(n.get('deadline-receipt-tender-date-lot')))
+-            form=ted_scalar(n.get('form-type')).lower()
+-            if 'award' in form or 'result' in form:continue
+-            today=datetime.now(timezone.utc).date().isoformat()
+-            stage='expired' if date and date[:10]<today else 'tender' if date else 'unknown'
+-            rows.append({'id':'TED:'+number,'source':'TED','title':ted_scalar(n.get('notice-title')) or 'Avis TED '+number,'description':'','kind':ted_scalar(n.get('notice-type') or n.get('form-type')) or 'AUTRE','country':ted_country(n),'region':'','buyer':ted_scalar(n.get('buyer-name')),'cpv':ted_scalar(n.get('classification-cpv')),'value':None,'currency':'EUR','published':normalized_date(ted_scalar(n.get('publication-date'))),'deadline':date,'url':'https://ted.europa.eu/fr/notice/-/detail/'+number,'stage':stage,'raw':n})
+-        page+=1
+-        yield page,rows,len(notices),payload.get('totalNoticeCount')
+-        next_token=payload.get('iterationNextToken')
+-        if not notices or not next_token or next_token==token or next_token in seen_tokens:break
+-        if token:seen_tokens.add(token)
+-        token=next_token
+-
+-def run_ted_full():
++def save_batch(rows, detailed=False, deadline=None):
++    now = datetime.now(timezone.utc).isoformat()
++    counts = {'inserted_unique': 0, 'updated_existing': 0, 'skipped': 0}
++    seen = set()
++    remaining = max(0, deadline-time.monotonic()) if deadline else 30
++    if not LOCK.acquire(timeout=min(30, remaining)):
++        raise TimeoutError('Database writer lock deadline reached')
++    try:
++        with connect() as c:
++            c.execute('PRAGMA busy_timeout=' + str(int(min(30, remaining)*1000)))
++            c.execute('BEGIN IMMEDIATE')
++            for x in rows:
++                if deadline and time.monotonic() >= deadline:
++                    raise TimeoutError('Database page deadline reached')
++                if x['id'] in seen:
++                    counts['skipped'] += 1
++                    continue
++                seen.add(x['id'])
++                exists = c.execute('SELECT 1 FROM opportunities WHERE id=?', (x['id'],)).fetchone()
++                c.execute('''INSERT INTO opportunities(id,source,title,description,kind,country,region,buyer,cpv,value,currency,published,deadline,url,stage,retrieved,raw)
++                  VALUES (:id,:source,:title,:description,:kind,:country,:region,:buyer,:cpv,:value,:currency,:published,:deadline,:url,:stage,:retrieved,:raw)
++                  ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,country=CASE WHEN excluded.country NOT IN ('UNKNOWN','EU','') THEN excluded.country ELSE opportunities.country END,region=excluded.region,buyer=excluded.buyer,cpv=excluded.cpv,deadline=excluded.deadline,published=excluded.published,kind=excluded.kind,stage=excluded.stage,url=excluded.url,retrieved=excluded.retrieved,raw=excluded.raw''',dict(x,retrieved=now,raw=json.dumps(x['raw'],ensure_ascii=False)))
++                counts['updated_existing' if exists else 'inserted_unique'] += 1
++    finally:
++        LOCK.release()
++    return counts if detailed else counts['inserted_unique'] + counts['updated_existing']
++
++def run_ted_full(*, progress=None, cancel=None, backfill=False, resume=True, settings=None, fetcher=None):
++    # Legacy name retained for CLI/UI compatibility; routine runs now use a delta window.
++    import ted_collector
++    import sys as _sys
++    def update(state):
++        with JOB_LOCK:
++            JOBS['TED'] = dict(state)
++        if progress:
++            progress(state)
++        else:
++            from collector_runtime import atomic_json
++            atomic_json(DB.parent/'sync-status.json', dict(state, status=state['state'],
++                        current_source='TED', sources={'TED': {'status': state['state'], 'result': state}},
++                        source_failures={'TED': state['last_error']} if state['state'] in ('error','partial','interrupted') else {}))
++    result = ted_collector.collect(_sys.modules[__name__], progress=update, cancel=cancel,
++                                   backfill=backfill, resume=resume, settings=settings, fetcher=fetcher)
+     with JOB_LOCK:
+-        if JOBS['TED']['state']=='running':return {'status':'already_running'}
+-        JOBS['TED']={'state':'running','pages':0,'received':0,'saved':0,'total':None,'error':'','started':datetime.now(timezone.utc).isoformat()}
+-    try:
+-        for page,rows,received,total in ted_active_pages():
+-            count=save_batch(rows)
+-            with JOB_LOCK:
+-                job=JOBS['TED'];job['pages']=page;job['received']+=received;job['saved']+=count;job['total']=total
+-        with JOB_LOCK:JOBS['TED']['state']='completed';summary=dict(JOBS['TED'])
+-        with LOCK,connect() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?)',('TED',datetime.now(timezone.utc).isoformat(),'ok',summary['saved'],f"Full ACTIVE iteration; {summary['pages']} pages"))
+-    except Exception as e:
+-        with JOB_LOCK:JOBS['TED']['state']='error';JOBS['TED']['error']=str(e)[:2500];summary=dict(JOBS['TED'])
+-        with LOCK,connect() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?)',('TED',datetime.now(timezone.utc).isoformat(),'error',summary['saved'],summary['error']))
+-    return dict(JOBS['TED'])
++        JOBS['TED'] = dict(result)
++    return result
+ 
+ def start_ted_full():
+     with JOB_LOCK:
+-        if JOBS['TED']['state']=='running':return dict(JOBS['TED'])
++        if JOBS['TED']['state'] in ('running', 'starting'):return dict(JOBS['TED'])
++        JOBS['TED'] = dict(state='starting', pages=0, received=0, saved=0, total=None, error='')
+     threading.Thread(target=run_ted_full,daemon=True,name='ted-active-ingestion').start()
+     return {'state':'starting','message':'Collecte TED lancée ; consulter /api/jobs'}
+ 
++@collection_guard
+ def ingest(source):
++    if source == 'TED':
++        result = run_ted_full()
++        return dict(result, source='TED', count=result.get('saved', 0),
++                    status='ok' if result['state']=='completed' else result['state'])
+     if source == 'APPROCH':
+         try:return approch.ingest(connect)
+         except Exception as exc:
+@@ -475,7 +430,7 @@
+             with LOCK,connect() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?)',(source,datetime.now(timezone.utc).isoformat(),'error',0,str(e)[:1800]))
+             return {'source':source,'count':0,'status':'error','message':str(e)[:1800]}
+     try:
+-        rows = boamp_fetch() if source=='BOAMP' else ted_fetch()
++        rows = boamp_fetch()
+         now=datetime.now(timezone.utc).isoformat()
+         with LOCK, connect() as c:
+             for x in rows:
+@@ -705,7 +660,7 @@
+                 runs=[dict(r) for r in c.execute("SELECT source,at,status,fetched,message FROM runs WHERE source LIKE 'EU_FT_%' ORDER BY rowid DESC LIMIT 8")]
+             self.json_response({'categories':stats,'runs':runs,'note':'Ces dossiers sont séparés du total BOAMP + TED.'})
+         elif u.path=='/api/sync-status':
+-            state_path=Path.home()/'AtlasMarches'/'data'/'sync-status.json'
++            state_path=DB.parent/'sync-status.json'
+             try:
+                 state=json.loads(state_path.read_text(encoding='utf-8'))
+             except (OSError, ValueError) as exc:
+@@ -831,7 +786,7 @@
+     return {'database':str(DB),'total':n,'source_count_with_data':connected,'catalog_count':len(SOURCES),'by_source':by_source,'by_country':by_country,'by_stage':status,'unclassified_ted_samples':sample,'note':'TED avec pays UNKNOWN ne prouve aucune couverture géographique. Un marché sans échéance ne prouve pas qu’il est ouvert.'}
+ 
+ def main():
+-    p=argparse.ArgumentParser();p.add_argument('--normalize-all-countries',action='store_true');p.add_argument('--merge-history',action='store_true');p.add_argument('--audit',action='store_true');p.add_argument('--repair-countries',action='store_true');p.add_argument('--enrich-ted-countries',action='store_true');p.add_argument('--enrich-limit',type=int,default=100);p.add_argument('--port',type=int,default=8000);p.add_argument('--ingest',type=str);p.add_argument('--import-approch',type=str);p.add_argument('--serve',action='store_true');p.add_argument('--ted-all-open',action='store_true');args=p.parse_args();init();
++    p=argparse.ArgumentParser();p.add_argument('--normalize-all-countries',action='store_true');p.add_argument('--merge-history',action='store_true');p.add_argument('--audit',action='store_true');p.add_argument('--repair-countries',action='store_true');p.add_argument('--enrich-ted-countries',action='store_true');p.add_argument('--enrich-limit',type=int,default=100);p.add_argument('--port',type=int,default=8000);p.add_argument('--ingest',type=str);p.add_argument('--import-approch',type=str);p.add_argument('--serve',action='store_true');p.add_argument('--ted-all-open',action='store_true');p.add_argument('--ted-backfill',action='store_true');p.add_argument('--ted-no-resume',action='store_true');args=p.parse_args();init();
+     if args.merge_history:merge_previous_databases(True)
+     if args.normalize_all_countries:
+         print(json.dumps(normalize_all_country_codes(),ensure_ascii=False,indent=2));return
+@@ -844,14 +799,20 @@
+         print(json.dumps({'repaired':repaired,'message':'Pays TED récupérés depuis les données déjà enregistrées; les inconnus nécessitent un nouvel import.'}));return
+     if args.enrich_ted_countries:
+         print(json.dumps(enrich_ted_countries(max(1,min(100000,args.enrich_limit))),ensure_ascii=False,indent=2));return
+-    if args.ted_all_open:
+-        print(json.dumps(run_ted_full(),ensure_ascii=False,indent=2));return
++    if args.ted_all_open or args.ted_backfill:
++        result=run_ted_full(backfill=args.ted_backfill, resume=not args.ted_no_resume)
++        print(json.dumps(result,ensure_ascii=False,indent=2))
++        raise SystemExit(0 if result['state']=='completed' else 2 if result['state']=='already_running' else 1)
+     if args.import_approch:
+         print(json.dumps(approch.ingest(connect,args.import_approch),ensure_ascii=False,indent=2));return
+     if args.ingest:
+         if args.ingest not in ('BOAMP','TED','APPROCH','ALL') and args.ingest not in [f['id'] for f in feed_registry() if f.get('enabled')]:p.error('Source inconnue ou désactivée')
+-        print(json.dumps([ingest(s) for s in (['BOAMP','TED'] if args.ingest=='ALL' else [args.ingest])],ensure_ascii=False,indent=2))
+-        if not args.serve:return
++        outcomes=[ingest(s) for s in (['BOAMP','TED'] if args.ingest=='ALL' else [args.ingest])]
++        print(json.dumps(outcomes,ensure_ascii=False,indent=2))
++        if not args.serve:raise SystemExit(0 if all(x.get('status')=='ok' for x in outcomes) else 1)
+     print(f'Atlas Marchés → http://localhost:{args.port}',flush=True)
+     ThreadingHTTPServer(('127.0.0.1',args.port),Handler).serve_forever()
+-if __name__=='__main__':main()
++if __name__=='__main__':
++    import multiprocessing
++    multiprocessing.freeze_support()
++    main()
+--- a/sync_engine.py
++++ b/sync_engine.py
+@@ -1,9 +1,12 @@
+-"""Shared, observable synchronization for CLI and bundled desktop.
+-Never claims coverage for a catalog-only source. No network calls at import time.
+-"""
++"""Shared synchronization with durable page progress and truthful outcomes."""
+ from datetime import datetime, timezone
+ from pathlib import Path
+-import json, os, sqlite3, time
++import json
++import os
++import sqlite3
++import threading
++import time
++from collector_runtime import AlreadyRunning, atomic_json, interruptible, run_lock
+ 
+ 
+ def utc():
+@@ -13,62 +16,122 @@
+ def snapshot(db):
+     if not Path(db).is_file():
+         return {'total': 0, 'by_source': {}, 'latest_retrieved': None}
+-    with sqlite3.connect(db, timeout=30) as conn:
++    conn = sqlite3.connect('file:' + str(Path(db).resolve()) + '?mode=ro', uri=True, timeout=5)
++    try:
+         sources = dict(conn.execute('SELECT source, COUNT(*) FROM opportunities GROUP BY source'))
+-        total = sum(sources.values())
+         latest = conn.execute('SELECT MAX(retrieved) FROM opportunities').fetchone()[0]
+-    return {'total': total, 'by_source': sources, 'latest_retrieved': latest}
++        return {'total': sum(sources.values()), 'by_source': sources, 'latest_retrieved': latest}
++    finally:
++        conn.close()
+ 
+ 
+-def run(app, state_file, include_feeds=True):
+-    app.init()
+-    before = snapshot(app.DB)
+-    state = {'started': utc(), 'finished': None, 'status': 'running', 'database': str(app.DB),
+-             'before': before, 'sources': {}, 'catalog_count': len(app.SOURCES),
+-             'enabled_feeds': [], 'notes': [], 'scheduler_version': '4h-run-at-load'}
+-    state_file = Path(state_file)
+-    state_file.parent.mkdir(parents=True, exist_ok=True)
++def run(app, state_file, include_feeds=True, include_optional=False, cancel=None):
++    cancel = cancel or threading.Event()
++    try:
++        with run_lock(app.DB), interruptible(cancel):
++            return _run(app, Path(state_file), include_feeds, include_optional, cancel)
++    except AlreadyRunning as exc:
++        # Do not overwrite the active owner's status file.
++        return {'status': 'already_running', 'state': 'already_running', 'error': str(exc)}
++
++
++def _run(app, state_file, include_feeds, include_optional, cancel):
++    state = dict(schema_version=1, started=utc(), finished=None, status='running', state='running',
++                 pid=os.getpid(), database=str(app.DB), current_source=None, page=0,
++                 sources={}, source_failures={}, catalog_count=len(app.SOURCES),
++                 enabled_feeds=[], notes=[], last_success_at=None)
++    # Carry a successful full-run timestamp, never infer success from the clock alone.
++    if state_file.exists():
++        try:
++            prior = json.loads(state_file.read_text(encoding='utf-8'))
++            state['last_success_at'] = prior.get('last_success_at')
++        except (OSError, ValueError):
++            state['notes'].append('Previous status unreadable; retained separately by the operator if needed.')
+ 
+     def store():
+-        temp = state_file.with_suffix('.tmp')
+-        temp.write_text(json.dumps(state, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+-        temp.replace(state_file)
++        atomic_json(state_file, state)
++        print(json.dumps({'event': 'sync_progress', **state}, ensure_ascii=False), flush=True)
+ 
+-    store()
+-    sources = [('BOAMP', lambda: app.ingest('BOAMP')), ('TED', app.run_ted_full),
+-               ('APPROCH',lambda: app.ingest('APPROCH')),
+-               ('EU_FT_TENDERS',lambda: app.eu_ft_ingest('tenders')),
+-               ('EU_FT_GRANTS',lambda: app.eu_ft_ingest('grants'))]
+-    if include_feeds:
+-        registered = app.feed_registry()
+-        feeds = [f['id'] for f in registered if f.get('enabled') and f.get('id')]
+-        state['enabled_feeds'] = feeds
+-        sources += [(name, lambda name=name: app.ingest(name)) for name in feeds]
+-        if not feeds:
+-            state['notes'].append('Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé.')
+-    for name, call in sources:
+-        started = time.monotonic()
++    def ted_progress(report):
++        state['page'] = report['pages']
++        for key in ('received', 'valid', 'inserted_unique', 'updated_existing', 'skipped',
++                    'retries', 'last_request_at', 'last_response_at', 'most_recent_successful_page', 'last_error'):
++            state[key] = report.get(key)
++        state['sources']['TED'] = dict(status=report['state'], result=report)
++        store()
++
++    before = None
++    store()  # Must exist even when initialization fails.
++    try:
++        app.init()
++        before = snapshot(app.DB)
++        state['before'] = before
++        # Supplied fake adapters used by tests may not expose callback parameters.
++        if hasattr(app, 'collection_guard'):
++            ted = lambda: app.run_ted_full(progress=ted_progress, cancel=cancel)
++        else:
++            ted = app.run_ted_full
++        sources = [('BOAMP', lambda: app.ingest('BOAMP')), ('TED', ted)]
++        optional = [('APPROCH', lambda: app.ingest('APPROCH')),
++                    ('EU_FT_TENDERS', lambda: app.eu_ft_ingest('tenders')),
++                    ('EU_FT_GRANTS', lambda: app.eu_ft_ingest('grants'))]
++        if include_optional:
++            sources += optional
++        else:
++            state['deferred_sources'] = [name for name, _ in optional]
++            state['notes'].append('APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.')
++        if include_feeds:
++            feeds = [f['id'] for f in app.feed_registry() if f.get('enabled') and f.get('id')]
++            state['enabled_feeds'] = feeds
++            sources += [(name, lambda name=name: app.ingest(name)) for name in feeds]
++            if not feeds:
++                state['notes'].append('Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé.')
++        for name, call in sources:
++            if cancel.is_set():
++                raise KeyboardInterrupt
++            state['current_source'], state['page'] = name, 0
++            store()
++            started = time.monotonic()
++            try:
++                result = call()
++                if not isinstance(result, dict):
++                    raise ValueError('Unstructured collector result')
++                outcome = result.get('status') or result.get('state') or 'unknown'
++                state['sources'][name] = dict(status=outcome,
++                    duration_seconds=round(time.monotonic()-started, 3), result=result)
++                if outcome not in ('ok', 'completed'):
++                    state['status'] = 'partial_error'
++                    state['source_failures'][name] = result.get('last_error') or result.get('error') or result.get('message') or outcome
++                if outcome == 'interrupted':
++                    cancel.set()
++                    raise KeyboardInterrupt
++            except Exception as exc:
++                state['status'] = 'partial_error'
++                state['source_failures'][name] = str(exc)[:500]
++                state['sources'][name] = dict(status='error', error=str(exc)[:500])
++            state['progress_snapshot'] = snapshot(app.DB)
++            store()
++        if state['status'] == 'running':
++            state['status'] = 'completed'
++            state['last_success_at'] = utc()
++    except (KeyboardInterrupt, SystemExit):
++        state['status'] = 'interrupted'
++        state['last_error'] = 'Collection interrupted; committed pages remain resumable'
++    except Exception as exc:
++        state['status'] = 'failed'
++        state['last_error'] = str(exc)[:500]
++    finally:
++        state['finished'] = utc()
++        state['state'] = state['status']
+         try:
+-            result = call()
+-            if not isinstance(result, dict):
+-                raise ValueError('Résultat du collecteur non structuré')
+-            status = result.get('status') or result.get('state') or 'unknown'
+-            if status not in ('ok', 'completed'):
+-                state['status'] = 'partial_error'
+-            state['sources'][name] = {'status': status, 'duration_seconds': round(time.monotonic()-started,1), 'result': result}
++            state['after'] = after = snapshot(app.DB)
++            if before is not None:
++                state['new_unique_records'] = after['total'] - before['total']
++                state['delta_by_source'] = {source: after['by_source'].get(source, 0)-before['by_source'].get(source, 0)
++                                          for source in set(before['by_source']) | set(after['by_source'])}
+         except Exception as exc:
+-            state['status'] = 'partial_error'
+-            state['sources'][name] = {'status': 'error', 'duration_seconds': round(time.monotonic()-started,1), 'error': str(exc)[:1200]}
+-        state['progress_snapshot'] = snapshot(app.DB)
++            state['snapshot_error'] = str(exc)[:300]
++            if state['status'] == 'completed':
++                state['status'] = state['state'] = 'failed'
+         store()
+-    after = snapshot(app.DB)
+-    state['after'] = after
+-    state['new_unique_records'] = after['total'] - before['total']
+-    state['delta_by_source'] = {src: after['by_source'].get(src, 0) - before['by_source'].get(src, 0)
+-                                for src in set(before['by_source']) | set(after['by_source'])}
+-    state['finished'] = utc()
+-    if state['status'] == 'running': state['status'] = 'completed'
+-    if state['new_unique_records'] == 0:
+-        state['notes'].append('Aucun nouvel identifiant unique : les avis ont pu être revus ou actualisés. Examiner les journaux des sources.')
+-    store()
+     return state
+--- a/sync_daily.py
++++ b/sync_daily.py
+@@ -1,35 +1,24 @@
+ #!/usr/bin/env python3
+-"""Atlas daily synchronization, run by macOS launchd. No third-party packages."""
++"""Manual/launchd collection entrypoint. Shared locking is in sync_engine.run."""
++import argparse
++import json
+ from pathlib import Path
+-from datetime import datetime, timezone
+-import fcntl, json, os, subprocess, sys
++import sys
+ 
+-ROOT = Path(__file__).resolve().parent
+-DATA = Path.home() / 'AtlasMarches' / 'data'
+-DATA.mkdir(parents=True, exist_ok=True)
+-LOCK = DATA / '.daily-sync.lock'
+-STATE = DATA / 'sync-status.json'
+-
+-def utc():
+-    return datetime.now(timezone.utc).isoformat()
+-
+-def write(state):
+-    temp = STATE.with_suffix('.tmp')
+-    temp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding='utf-8')
+-    temp.replace(STATE)
+ 
+ def main():
++    import app
+     from sync_engine import run
+-    import app
+-    with LOCK.open('a+') as handle:
+-        try:
+-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            print('Une collecte Atlas est déjà en cours.')
+-            return 2
+-        state = run(app, STATE)
+-        print(json.dumps(state, ensure_ascii=False, indent=2))
+-        return 0 if state['status'] == 'completed' else 1
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--include-optional', action='store_true',
++                        help='Also try unvalidated APProch and EU Funding adapters')
++    args = parser.parse_args()
++    report = run(app, Path(app.DB).parent / 'sync-status.json', include_optional=args.include_optional)
++    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
++    return 0 if report['status'] == 'completed' else 2 if report['status'] == 'already_running' else 1
++
+ 
+ if __name__ == '__main__':
++    import multiprocessing
++    multiprocessing.freeze_support()
+     sys.exit(main())
+--- a/desktop.py
++++ b/desktop.py
+@@ -18,19 +18,10 @@
+ STATUS = DATA / 'desktop-sync-status.json'
+ 
+ def sync():
+-    """Collect and publish before/after counts in the persistent user directory."""
+     from sync_engine import run
+-    import fcntl
+-    lock = DATA / '.desktop-sync.lock'
+-    with lock.open('a+') as handle:
+-        try:
+-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+-        except BlockingIOError:
+-            print('Une collecte Atlas est déjà en cours.')
+-            return 2
+-        state = run(app, STATUS)
+-        print(json.dumps(state, ensure_ascii=False, indent=2))
+-        return 0 if state['status'] == 'completed' else 1
++    report = run(app, Path(app.DB).parent / 'sync-status.json')
++    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
++    return 0 if report['status']=='completed' else 2 if report['status']=='already_running' else 1
+ 
+ def available_port():
+     with socket.socket() as sock:
+@@ -58,4 +49,6 @@
+     return 0
+ 
+ if __name__ == '__main__':
++    import multiprocessing
++    multiprocessing.freeze_support()
+     sys.exit(main())
+--- a/install.sh
++++ b/install.sh
+@@ -7,8 +7,17 @@
+ exec > >(tee -a "$LOG") 2>&1
+ printf '[%s] Installing Atlas Collector\n' "$(date -u +%FT%TZ)"
+ RES="$(cd "$(dirname "$0")" && pwd)"
++LABEL=fr.atlasmarches.collector
++if /bin/launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
++  echo 'STOP: unload the existing collector LaunchAgent and confirm its process has stopped before installation.'
++  exit 5
++fi
++if /usr/bin/pgrep -f '[s]ync_daily.py|[r]un-collector.sh' >/dev/null || /usr/bin/pgrep -f "$TARGET/app.py" >/dev/null; then
++  echo 'STOP: a collector or installed web process may still be running. Stop it gracefully before replacing source.'
++  exit 5
++fi
+ # Avoid overwriting any user database or API secrets
+-for file in app.py sync_daily.py sync_engine.py approch.py eu_ft.py sources.json buyers.json access_registry.json; do
++for file in app.py sync_daily.py sync_engine.py collector_runtime.py ted_collector.py maintenance.py ted_check.py approch.py eu_ft.py sources.json buyers.json access_registry.json RECOVERY.md; do
+   /bin/cp -f "$RES/$file" "$TARGET/$file"
+ done
+ if [ ! -f "$TARGET/feeds.json" ]; then /bin/cp "$RES/feeds.json" "$TARGET/feeds.json"; fi
+@@ -38,16 +47,12 @@
+ path,label,runner,logs=sys.argv[1:]
+ with open(path,'wb') as f:
+     plistlib.dump({'Label':label,'ProgramArguments':[runner],
+-        'StartInterval':14400,'RunAtLoad':True,
++        'StartInterval':14400,'RunAtLoad':False,
+         'StandardOutPath':logs+'/collector.log',
+         'StandardErrorPath':logs+'/collector-error.log',
+         'ProcessType':'Background'},f)
+ PYPLIST
+ /usr/bin/plutil -lint "$PLIST_NEW"
+ /bin/mv -f "$PLIST_NEW" "$PLIST"
+-UIDNUM="$(id -u)"
+-/bin/launchctl bootout "gui/$UIDNUM/$LABEL" >/dev/null 2>&1 || true
+-/bin/launchctl bootstrap "gui/$UIDNUM" "$PLIST"
+-/bin/launchctl enable "gui/$UIDNUM/$LABEL"
+-/bin/launchctl kickstart -k "gui/$UIDNUM/$LABEL"
+-echo 'SUCCESS: Atlas Collector installed and first collection triggered.'
++echo 'Atlas Collector files installed; scheduling remains unloaded. No collection was started.'
++echo 'NO-GO for scheduling until the controlled TED+BOAMP run, database integrity and status/exit-code gates pass.'
+--- a/packaging/build.py
++++ b/packaging/build.py
+@@ -15,6 +15,7 @@
+ for name in ['sources.json','buyers.json','feeds.json','access_registry.json']:
+     cmd.extend(['--add-data', f'{root / name}{sep}.'])
+ cmd.extend(['--hidden-import', 'desktop_autosync'])
++cmd.extend(['--hidden-import', 'ted_collector', '--hidden-import', 'collector_runtime'])
+ cmd.append(str(root / 'desktop.py'))
+ print('Building on', platform.platform(), flush=True)
+ subprocess.check_call(cmd, cwd=root)
+--- a/README.md
++++ b/README.md
+@@ -1,56 +1,50 @@
+ # Atlas Marchés
+ 
+-Public procurement discovery and collection application, imported unchanged from
+-the supplied `Installer Atlas Collector.app.zip` Resources directory. This is the
+-actual collector application, replacing the unrelated prototype previously generated.
++Public procurement discovery app and collector, based on the supplied Atlas
++Collector installer and matching live-sync release. The TED recovery requirements
++are implemented in this checkout; the UI and BOAMP adapter are preserved.
+ 
+-## Local development
++## Run the app
+ 
+-Requires Python 3 with SQLite FTS5 support; no third-party Python packages.
+-Use the existing checkout (cloud tasks are already isolated).
++Requires Python 3 with SQLite FTS5; no third-party dependencies for the local UI.
+ 
+ ```sh
+ cd /workspace/ATLAS
+-mkdir -p /workspace/atlas-data
+ ATLAS_DB=/workspace/atlas-data/atlas.db python3 app.py --serve --port 8000
+ ```
+ 
+-The UI listens on loopback port 8000. This command starts the UI without invoking
+-collection. `/api/health`, `/api/stats`, and `/api/opportunities` provide local
+-readiness checks. The cloud development database contains 94 distinct APProch
+-forecast projects imported from the supplied 100-row spreadsheet. The production
+-Mac database and its backups are not included in the archives. Forecast projects
+-use `stage=future` and have no confirmed submission deadline.
++The server binds to loopback port 8000. The cloud database holds 94 APProch forecast
++projects imported from the uploaded spreadsheet. These are future projects, not
++confirmed open tenders. No production Mac database or backups were imported.
++Keep the DB outside the checkout and preserve it between runs. The service has
++no authentication; keep it local.
+ 
+-## Tests and additional release files
++## Recovery, validation and builds
+ 
+-Run `python3 -m unittest discover -p 'test_*.py' -v` from the repository root.
+-All 14 supplied tests passed in this cloud environment. A separate temporary-DB
+-check verified the spreadsheet import, repeat-import idempotency, SQLite integrity,
+-and FTS5 integrity.
++See [RECOVERY.md](RECOVERY.md) for bounded TED defaults, resume behavior, locking,
++status files, safe stop/start, maintenance checks and deployment gates.
+ 
+-Missing tests, desktop launchers, packaging scripts, workflows and documentation
+-were added from `atlas-marches-live-sync-fix.zip`. Its collector source matches
+-the installer exactly. Conflicting versions in the EU Funding archive were not
+-substituted. See `docs/additional-archives.json` for archive hashes and decisions.
+-The desktop packages have not been built or validated on macOS or Windows; remote
+-EU Funding, TED, BOAMP and APProch ingestion has not been validated here.
++```sh
++python3 -m unittest discover -p 'test_*.py' -v
++python3 maintenance.py /workspace/atlas-data/atlas.db
++python3 packaging/build_collector_installer.py
++```
+ 
+-Keep the service local: authentication and production deployment have not been
+-validated. Collection actions can make live network requests and write data.
+-Do not run `sync_daily.py`, `--ted-all-open`, or the installer as a smoke test:
+-the imported TED collector defaults to unlimited pages and has not yet undergone
+-the recovery changes described in the supplied documents.
++All 41 tests pass. The installer build produces
++`release/Atlas-Collector-Recovery-v1-macOS-unsigned.zip`: an unsigned script-based
++macOS installer requiring Python, not a bundled runtime or validated native DMG.
++It installs files without activating collection or scheduling. The existing native
++desktop build must run and be validated on macOS; it has not been built here.
+ 
+-## Source provenance and platform limits
++Four-hour scheduling remains **NO-GO**: the single bounded live TED staging attempt
++failed to connect and received zero pages. Live TED query semantics, BOAMP runtime
++access and the original Mac's source/database/backup checks remain outstanding.
++APProch and EU Funding remote adapters are deferred by default, not marked successful.
++Do not activate legacy scheduling scripts while these gates are unresolved.
+ 
+-`docs/installer-source-sha256.json` records the archive hash and the exact SHA256
+-of every imported source file. `install.sh` is the original macOS installer; it
+-copies files into the user's Library and immediately enables a four-hour
+-LaunchAgent. It must not be run in this Linux cloud environment.
+-
+-The two supplied recovery documents are retained under `docs/` as reference
+-material. Their historical database counts, process IDs, installed-source paths,
+-and repair claims have not been verified here. Importing this installer does not
+-establish that it matches the current installed Mac collector, nor does it
+-implement or complete the requested recovery described in those documents.
++Source provenance is in `docs/installer-source-sha256.json` (original archive
++hashes), `docs/additional-archives.json` (merge decisions), and
++`docs/recovery-hashes.json` (recovered source hashes). Review the full diff and
++concrete validation evidence in `docs/recovery.patch` and `docs/recovery-report.json`.
++The historical recovery documents are retained under `docs/` as references; their
++Mac process IDs and record counts have not been verified in this cloud environment.
+--- /dev/null
++++ b/collector_runtime.py
+@@ -0,0 +1,85 @@
++"""Shared durable status and advisory collection lock (macOS/Linux)."""
++import contextlib
++import json
++import os
++from pathlib import Path
++import tempfile
++import threading
++import signal
++
++_held = threading.local()
++
++
++@contextlib.contextmanager
++def interruptible(cancel):
++    """Restore signal handlers after CLI use; web threads use their cancel event."""
++    previous = {}
++    if threading.current_thread() is threading.main_thread():
++        def stop(signum, frame):
++            cancel.set()
++            raise KeyboardInterrupt
++        for signum in (signal.SIGTERM, signal.SIGINT):
++            previous[signum] = signal.signal(signum, stop)
++    try:
++        yield
++    finally:
++        for signum, handler in previous.items():
++            signal.signal(signum, handler)
++
++
++def atomic_json(path, value):
++    path = Path(path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    descriptor, temporary = tempfile.mkstemp(prefix=path.name + '.', dir=path.parent)
++    try:
++        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
++            json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
++            handle.write('\n')
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary, path)
++        directory = os.open(path.parent, os.O_RDONLY)
++        try:
++            os.fsync(directory)
++        finally:
++            os.close(directory)
++    finally:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
++
++
++class AlreadyRunning(RuntimeError):
++    pass
++
++
++@contextlib.contextmanager
++def run_lock(database):
++    """One kernel lock per database, shared by CLI, scheduler and web callers.
++
++    Never unlink the lock file: kernel locks release on process exit, including
++    crashes. The PID is diagnostic only, never grounds to delete a 'stale' lock.
++    Reentrancy is limited to the owning thread and database.
++    """
++    import fcntl
++    path = str(Path(database).resolve()) + '.collector.lock'
++    held = getattr(_held, 'paths', set())
++    if path in held:
++        yield
++        return
++    Path(path).parent.mkdir(parents=True, exist_ok=True)
++    with open(path, 'a+', encoding='utf-8') as handle:
++        try:
++            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError as exc:
++            raise AlreadyRunning('A collector already owns this database') from exc
++        held.add(path)
++        _held.paths = held
++        try:
++            handle.seek(0)
++            handle.truncate()
++            handle.write(str(os.getpid()) + '\n')
++            handle.flush()
++            yield
++        finally:
++            held.remove(path)
++            fcntl.flock(handle, fcntl.LOCK_UN)
+--- /dev/null
++++ b/ted_collector.py
+@@ -0,0 +1,351 @@
++"""Bounded TED transport and recoverable, incremental collection.
++
++The endpoint, query fields and iteration protocol come from the supplied app.
++Every HTTP attempt runs in a disposable process so a slow TLS stream cannot
++outlive the request/run deadline. No detached reader threads accumulate.
++"""
++from datetime import datetime, timedelta, timezone
++from email.utils import parsedate_to_datetime
++import hashlib
++import json
++import math
++import multiprocessing
++import os
++from pathlib import Path
++import random
++import tempfile
++import threading
++import time
++from urllib.error import HTTPError, URLError
++from urllib.request import Request, urlopen
++
++from collector_runtime import AlreadyRunning, atomic_json, run_lock, interruptible
++
++ENDPOINT = 'https://api.ted.europa.eu/v3/notices/search'
++FIELDS = ['publication-number', 'publication-date', 'notice-title', 'buyer-name',
++          'buyer-country', 'classification-cpv', 'deadline-receipt-tender-date-lot',
++          'form-type', 'notice-type']
++
++
++def utc():
++    return datetime.now(timezone.utc).isoformat()
++
++
++class CollectionStopped(RuntimeError):
++    pass
++
++
++class TransportError(RuntimeError):
++    def __init__(self, message, retryable=False, retry_after=None):
++        super().__init__(message)
++        self.retryable = retryable
++        self.retry_after = retry_after
++
++
++def _http_worker(endpoint, body, timeout, maximum, target):
++    """Child owns the socket; killing this child closes even a stalled read."""
++    try:
++        request = Request(endpoint, data=json.dumps(body).encode(), method='POST',
++                          headers={'Content-Type': 'application/json',
++                                   'Accept': 'application/json',
++                                   'User-Agent': 'AtlasMarches/TED-recovery-1'})
++        with urlopen(request, timeout=timeout) as response:
++            data = response.read(maximum + 1)
++            if len(data) > maximum:
++                raise ValueError('TED response exceeds byte limit')
++            if not data:
++                raise ValueError('TED returned an empty response body')
++            try:
++                payload = json.loads(data)
++            except (ValueError, UnicodeError) as exc:
++                raise ValueError('TED returned malformed JSON; bytes=' + str(len(data)) +
++                                 '; sha256=' + hashlib.sha256(data).hexdigest()) from exc
++            result = {'payload': payload}
++    except HTTPError as exc:
++        # Do not read an error body: it too may stream forever, or contain secrets.
++        result = {'error': 'TED HTTP ' + str(exc.code), 'retryable': exc.code in
++                  (429, 500, 502, 503, 504), 'retry_after': exc.headers.get('Retry-After')}
++    except (URLError, TimeoutError, OSError) as exc:
++        reason = getattr(exc, 'reason', exc)
++        description = str(reason)
++        category = ('proxy policy/tunnel denied' if '403' in description else
++                    'TLS certificate verification failed' if 'CERTIFICATE_VERIFY_FAILED' in description else
++                    'connection refused' if 'Connection refused' in description else
++                    type(reason).__name__)
++        # Classify without exposing proxy URLs, headers, credentials or payloads.
++        result = {'error': 'TED connection/read failed: ' + category,
++                  'retryable': category not in ('proxy policy/tunnel denied', 'TLS certificate verification failed')}
++    except Exception as exc:
++        result = {'error': str(exc) if isinstance(exc, ValueError) else type(exc).__name__,
++                  'retryable': False}
++    Path(target).write_text(json.dumps(result), encoding='utf-8')
++
++
++def bounded_http(body, deadline, cancel, settings, endpoint=ENDPOINT):
++    remaining = min(deadline - time.monotonic(), settings['request_seconds'])
++    if remaining <= 0:
++        raise CollectionStopped('TED total deadline reached')
++    # urllib uses one socket timeout for connect and reads; use the stricter cap.
++    socket_timeout = min(settings['connect_seconds'], settings['read_seconds'], remaining)
++    context = multiprocessing.get_context('spawn')
++    with tempfile.TemporaryDirectory(prefix='atlas-ted-http-') as directory:
++        target = str(Path(directory) / 'response.json')
++        worker = context.Process(target=_http_worker, args=(endpoint, body, socket_timeout,
++                                 settings['max_bytes'], target), daemon=True)
++        try:
++            worker.start()
++            attempt_deadline = time.monotonic() + remaining
++            while worker.is_alive():
++                if cancel.is_set():
++                    raise CollectionStopped('TED interrupted')
++                if time.monotonic() >= min(deadline, attempt_deadline):
++                    raise TransportError('TED request wall-clock timeout', retryable=True)
++                worker.join(min(.05, max(0, min(deadline, attempt_deadline)-time.monotonic())))
++            if not Path(target).exists():
++                raise TransportError('TED HTTP worker failed', retryable=False)
++            result = json.loads(Path(target).read_text(encoding='utf-8'))
++            if 'error' in result:
++                raise TransportError(result['error'], result.get('retryable', False),
++                                     result.get('retry_after'))
++            return result['payload']
++        finally:
++            if worker.pid is not None and worker.is_alive():
++                worker.terminate()
++                worker.join(1)
++                if worker.is_alive():
++                    worker.kill()  # Only our disposable HTTP child, never a collector.
++                    worker.join(1)
++            worker.close()
++
++
++def settings_from_env():
++    defaults = {'total_seconds': 180, 'request_seconds': 30, 'connect_seconds': 10,
++                'read_seconds': 10, 'max_pages': 20, 'page_size': 100, 'retries': 2,
++                'max_bytes': 8_000_000, 'overlap_days': 2, 'initial_days': 14}
++    for key, default in list(defaults.items()):
++        value = float(os.getenv('ATLAS_TED_' + key.upper(), str(default)))
++        if key in ('max_pages', 'page_size', 'retries', 'max_bytes', 'overlap_days', 'initial_days'):
++            if not value.is_integer():
++                raise ValueError('TED integer setting required: ' + key)
++            value = int(value)
++        if not math.isfinite(value) or value < 0 or (key != 'retries' and value == 0):
++            raise ValueError('Invalid TED setting: ' + key)
++        defaults[key] = value
++    if defaults['max_pages'] > 1000 or defaults['page_size'] > 100 or defaults['retries'] > 5:
++        raise ValueError('TED maximum: 1000 pages, 100 rows/page, 5 retries')
++    return defaults
++
++
++def retry_delay(value, attempt):
++    if value is not None:
++        try:
++            delay = float(value)
++        except ValueError:
++            try:
++                delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
++            except (ValueError, TypeError, OverflowError):
++                delay = 0
++        if math.isfinite(delay):
++            return max(0, delay)
++    return min(8, 2 ** attempt) + random.uniform(0, .25)
++
++
++def normalize(app, notice):
++    if not isinstance(notice, dict):
++        return None
++    number = app.ted_scalar(notice.get('publication-number') or notice.get('publicationNumber'))
++    if not number:
++        return None
++    form = app.ted_scalar(notice.get('form-type')).lower()
++    if 'award' in form or 'result' in form:
++        return None
++    deadline = app.normalized_date(app.ted_scalar(notice.get('deadline-receipt-tender-date-lot')))
++    today = datetime.now(timezone.utc).date().isoformat()
++    return dict(id='TED:' + number, source='TED',
++                title=app.ted_scalar(notice.get('notice-title')) or 'Avis TED ' + number,
++                description='', kind=app.ted_scalar(notice.get('notice-type') or notice.get('form-type')) or 'AUTRE',
++                country=app.ted_country(notice), region='', buyer=app.ted_scalar(notice.get('buyer-name')),
++                cpv=app.ted_scalar(notice.get('classification-cpv')), value=None, currency='EUR',
++                published=app.normalized_date(app.ted_scalar(notice.get('publication-date'))),
++                deadline=deadline, url='https://ted.europa.eu/fr/notice/-/detail/' + number,
++                stage='expired' if deadline and deadline[:10] < today else 'tender' if deadline else 'unknown',
++                raw=notice)
++
++
++def collect(app, *, settings=None, fetcher=None, cancel=None, progress=None,
++            backfill=False, resume=True, state_dir=None):
++    settings = settings or settings_from_env()
++    cancel = cancel or threading.Event()
++    fetcher = fetcher or bounded_http
++    directory = Path(state_dir or Path(app.DB).parent)
++    status_file = directory / 'ted-status.json'
++    checkpoint_file = directory / ('ted-backfill-checkpoint.json' if backfill else 'ted-checkpoint.json')
++    try:
++        with run_lock(app.DB), interruptible(cancel):
++            return _collect(app, settings, fetcher, cancel, progress, backfill, resume,
++                            status_file, checkpoint_file)
++    except AlreadyRunning:
++        return {'state': 'already_running', 'error': 'A collector already owns this database'}
++
++
++def _collect(app, cfg, fetcher, cancel, progress, backfill, resume, status_file, checkpoint_file):
++    started = time.monotonic()
++    deadline = started + cfg['total_seconds']
++    state = dict(schema_version=1, source='TED', state='running', pid=os.getpid(), started=utc(),
++                 finished=None, mode='backfill' if backfill else 'delta', pages=0, received=0,
++                 valid=0, inserted_unique=0, updated_existing=0, skipped=0, saved=0,
++                 retries=0, last_request_at=None, last_response_at=None,
++                 most_recent_successful_page=None, last_error=None, last_success_at=None, total=None)
++    checkpoint = {}
++
++    def publish():
++        atomic_json(status_file, state)
++        print(json.dumps({'event': 'ted_progress', **state}, ensure_ascii=False), flush=True)
++        if progress:
++            progress(dict(state))
++
++    def check():
++        if cancel.is_set():
++            raise CollectionStopped('TED interrupted')
++        if time.monotonic() >= deadline:
++            raise CollectionStopped('TED total deadline reached')
++
++    publish()  # A running status exists before checkpoint, DB or network work.
++    try:
++        if checkpoint_file.exists():
++            checkpoint = json.loads(checkpoint_file.read_text(encoding='utf-8'))
++            if checkpoint.get('schema_version') != 1:
++                raise ValueError('Unsupported TED checkpoint schema; inspect before resuming')
++        mode = state['mode']
++        watermark = checkpoint.get('last_success_at')
++        state['last_success_at'] = watermark
++        lower = (datetime.fromisoformat(watermark) - timedelta(days=cfg['overlap_days'])
++                 if watermark else datetime.now(timezone.utc) - timedelta(days=cfg['initial_days']))
++        query = 'form-type = competition'
++        if not backfill:
++            query += ' AND publication-date >= ' + lower.strftime('%Y%m%d')
++        pending = checkpoint.get('pending') if resume else None
++        if pending and pending.get('mode') == mode:
++            query = pending['query']
++            token = pending.get('token')
++            window_started = pending['window_started']
++            seen_tokens = set(pending.get('seen_tokens', []))
++            seen_signatures = set(pending.get('seen_signatures', []))
++        else:
++            token, seen_tokens, seen_signatures = None, set(), set()
++            window_started = state['started']
++        state['query'] = query
++        state['resumed'] = bool(pending and pending.get('mode') == mode)
++        checkpoint = {'schema_version': 1, 'last_success_at': watermark, 'pending':
++                      dict(mode=mode, query=query, token=token, window_started=window_started,
++                           seen_tokens=sorted(seen_tokens), seen_signatures=sorted(seen_signatures))}
++        atomic_json(checkpoint_file, checkpoint)
++        for page in range(1, cfg['max_pages'] + 1):
++            check()
++            body = dict(query=query, fields=FIELDS, limit=cfg['page_size'], scope='ACTIVE',
++                        paginationMode='ITERATION', checkQuerySyntax=False)
++            if token:
++                body['iterationNextToken'] = token
++            for attempt in range(cfg['retries'] + 1):
++                check()
++                state['last_request_at'] = utc()
++                publish()
++                try:
++                    payload = fetcher(body, deadline, cancel, cfg)
++                    state['last_response_at'] = utc()
++                    check()
++                    break
++                except TransportError as exc:
++                    if str(exc).startswith('TED HTTP '):
++                        state['last_response_at'] = utc()
++                    state['last_error'] = str(exc)
++                    if not exc.retryable or attempt == cfg['retries']:
++                        raise
++                    delay = retry_delay(exc.retry_after, attempt)
++                    if time.monotonic() + delay >= deadline:
++                        raise CollectionStopped('TED retry delay exceeds remaining deadline') from exc
++                    state['retries'] += 1
++                    publish()
++                    if cancel.wait(delay):
++                        raise CollectionStopped('TED interrupted during retry')
++            if not isinstance(payload, dict):
++                raise ValueError('TED response must be a JSON object')
++            notices = payload.get('notices', payload.get('results'))
++            if not isinstance(notices, list):
++                raise ValueError('TED response has no notices list')
++            if len(notices) > cfg['page_size']:
++                raise ValueError('TED response exceeds requested page size')
++            state['total'] = payload.get('totalNoticeCount')
++            state['received'] += len(notices)
++            rows = [row for notice in notices if (row := normalize(app, notice))]
++            state['valid'] += len(rows)
++            state['skipped'] += len(notices) - len(rows)
++            if notices and not rows:
++                raise ValueError('TED page contains no valid notice identifiers')
++            signature = hashlib.sha256(json.dumps(sorted(row['id'] for row in rows)).encode()).hexdigest()
++            if rows and signature in seen_signatures:
++                raise CollectionStopped('TED repeated page IDs; cursor retained for inspection')
++            next_token = payload.get('iterationNextToken')
++            if next_token is not None and not isinstance(next_token, str):
++                raise ValueError('TED continuation token must be a string')
++            check()
++            # One transaction per page. Counters and checkpoint advance only after commit.
++            counts = app.save_batch(rows, detailed=True, deadline=deadline)
++            for key in ('inserted_unique', 'updated_existing', 'skipped'):
++                state[key] += counts[key]
++            state['saved'] = state['inserted_unique'] + state['updated_existing']
++            state['pages'] += 1
++            state['most_recent_successful_page'] = state['pages']
++            if rows:
++                seen_signatures.add(signature)
++            if token:
++                seen_tokens.add(token)
++            if next_token and (next_token == token or next_token in seen_tokens):
++                publish()
++                raise CollectionStopped('TED repeated continuation token; page committed, safe to replay')
++            if not notices or not next_token:
++                state['state'] = 'completed'
++                state['last_success_at'] = window_started
++                checkpoint = {'schema_version': 1, 'last_success_at': window_started, 'pending': None}
++                atomic_json(checkpoint_file, checkpoint)
++                break
++            token = next_token
++            checkpoint['pending'] = dict(mode=mode, query=query, token=token,
++                                         window_started=window_started, seen_tokens=sorted(seen_tokens),
++                                         seen_signatures=sorted(seen_signatures))
++            atomic_json(checkpoint_file, checkpoint)
++            publish()
++        else:
++            raise CollectionStopped('TED page limit reached; continuation checkpoint saved')
++    except (KeyboardInterrupt, SystemExit):
++        state['state'] = 'interrupted'
++        state['last_error'] = 'TED interrupted by signal'
++    except CollectionStopped as exc:
++        state['state'] = 'interrupted' if cancel.is_set() else 'partial'
++        state['last_error'] = str(exc)
++    except Exception as exc:
++        state['state'] = 'partial' if state['pages'] else 'error'
++        state['last_error'] = str(exc)[:500]
++    finally:
++        connection = None
++        try:
++            connection = app.connect()
++            connection.execute('PRAGMA busy_timeout=' + str(int(max(0, min(1, deadline-time.monotonic()))*1000)))
++            with connection:
++                connection.execute('INSERT INTO runs VALUES (?,?,?,?,?)',
++                                   ('TED', utc(), 'ok' if state['state']=='completed' else state['state'],
++                                    state['saved'], json.dumps({key: state.get(key) for key in
++                                    ('pages', 'inserted_unique', 'updated_existing', 'skipped', 'last_error')})))
++        except Exception as exc:
++            state['run_log_error'] = type(exc).__name__
++            if state['state'] == 'completed':
++                state['state'] = 'partial'
++                state['last_error'] = 'TED pages committed but run log could not be persisted'
++        finally:
++            if connection is not None:
++                connection.close()
++        state['finished'] = utc()
++        state['elapsed_seconds'] = round(time.monotonic() - started, 3)
++        state['error'] = state['last_error'] or ''
++        publish()
++    return state
+--- /dev/null
++++ b/maintenance.py
+@@ -0,0 +1,38 @@
++"""Check a consistent disposable copy; never rebuild or modify the source DB."""
++import argparse
++import json
++from pathlib import Path
++import sqlite3
++import tempfile
++
++
++def inspect_copy(database):
++    source_path = Path(database).resolve()
++    if not source_path.is_file():
++        raise FileNotFoundError(source_path)
++    with tempfile.TemporaryDirectory(prefix='atlas-integrity-') as directory:
++        source = sqlite3.connect(source_path.as_uri() + '?mode=ro', uri=True, timeout=5)
++        copy = sqlite3.connect(str(Path(directory) / 'check.db'))
++        try:
++            source.backup(copy)
++            integrity = [row[0] for row in copy.execute('PRAGMA integrity_check')]
++            if integrity != ['ok']:
++                raise RuntimeError('SQLite integrity failed: ' + repr(integrity[:5]))
++            copy.execute("INSERT INTO opportunities_fts(opportunities_fts,rank) VALUES('integrity-check',1)")
++            counts = dict(copy.execute('SELECT source,COUNT(*) FROM opportunities GROUP BY source'))
++            return {'sqlite_integrity': 'ok', 'fts5_integrity': 'ok', 'by_source': counts,
++                    'checked': 'consistent temporary backup; source opened read-only'}
++        finally:
++            source.close()
++            copy.close()
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('database')
++    args = parser.parse_args()
++    try:
++        print(json.dumps(inspect_copy(args.database), indent=2))
++    except Exception as exc:
++        print(json.dumps({'status': 'error', 'error': str(exc)}))
++        raise SystemExit(1)
+--- /dev/null
++++ b/ted_check.py
+@@ -0,0 +1,36 @@
++"""One bounded TED staging run; never writes the configured application DB."""
++import argparse
++import json
++import os
++from pathlib import Path
++import tempfile
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--report', type=Path, required=True)
++    args = parser.parse_args()
++    with tempfile.TemporaryDirectory(prefix='atlas-ted-check-') as directory:
++        os.environ['ATLAS_DB'] = str(Path(directory)/'staging.db')
++        import app
++        from maintenance import inspect_copy
++        from ted_collector import settings_from_env
++        app.init()
++        settings = settings_from_env()
++        settings.update(max_pages=1, page_size=2, total_seconds=20, request_seconds=15,
++                        retries=0, connect_seconds=5, read_seconds=5)
++        before = inspect_copy(app.DB)
++        result = app.run_ted_full(settings=settings, resume=False)
++        after = inspect_copy(app.DB)
++        report = {'before': before, 'result': result, 'after': after,
++                  'production_database_touched': False}
++        from collector_runtime import atomic_json
++        atomic_json(args.report, report)
++        print(json.dumps(report, indent=2), flush=True)
++        return 0 if result['state']=='completed' else 1
++
++
++if __name__ == '__main__':
++    import multiprocessing
++    multiprocessing.freeze_support()
++    raise SystemExit(main())
+--- /dev/null
++++ b/test_ted_recovery.py
+@@ -0,0 +1,374 @@
++"""Recovery gates: isolated fixtures and local HTTP only; no production DB."""
++import contextlib
++import io
++import json
++import multiprocessing
++import signal
++import subprocess
++import sys
++import os
++from pathlib import Path
++import sqlite3
++import tempfile
++import threading
++import time
++import unittest
++from unittest.mock import patch
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++
++import app
++import ted_collector as ted
++from collector_runtime import AlreadyRunning, atomic_json, run_lock
++from maintenance import inspect_copy
++from sync_engine import run
++
++
++def notice(number='001', **extra):
++    return {'publication-number': number, 'notice-title': 'Network services',
++            'buyer-country': 'FRA', 'form-type': 'competition', **extra}
++
++
++def hold_lock(database, ready, release):
++    with run_lock(database):
++        ready.set()
++        release.wait(5)
++
++
++class RecoveryTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.root = Path(self.temp.name)
++        self.database = self.root / 'atlas.db'
++        self.db_patch = patch.object(app, 'DB', self.database)
++        self.db_patch.start()
++        app.init()
++        self.cfg = ted.settings_from_env()
++        self.cfg.update(max_pages=3, page_size=3, total_seconds=5, retries=1)
++        self.output = contextlib.redirect_stdout(io.StringIO())
++        self.output.__enter__()
++
++    def tearDown(self):
++        self.output.__exit__(None, None, None)
++        self.db_patch.stop()
++        self.temp.cleanup()
++
++    def collect(self, fetcher, **kwargs):
++        return ted.collect(app, settings=self.cfg, fetcher=fetcher, **kwargs)
++
++    def count(self):
++        with app.connect() as conn:
++            return conn.execute('SELECT COUNT(*) FROM opportunities').fetchone()[0]
++
++    def test_incremental_commit_counters_resume_and_idempotency(self):
++        self.cfg['max_pages'] = 1
++        first = self.collect(lambda *args: {'notices': [notice(), notice()], 'iterationNextToken': 'next'})
++        self.assertEqual(first['state'], 'partial')
++        self.assertEqual((first['received'], first['valid'], first['inserted_unique'], first['skipped']), (2, 2, 1, 1))
++        self.assertEqual(self.count(), 1)
++        self.assertIsNone(json.loads((self.root/'ted-checkpoint.json').read_text())['last_success_at'])
++        def resume(body, *args):
++            self.assertEqual(body['iterationNextToken'], 'next')
++            self.assertEqual(self.count(), 1)  # Earlier page already committed.
++            return {'notices': [notice('002')]}
++        second = self.collect(resume)
++        self.assertEqual(second['state'], 'completed')
++        self.assertTrue(second['resumed'])
++        self.assertEqual(self.count(), 2)
++        repeat = self.collect(lambda *args: {'notices': [notice(), notice('002')]})
++        self.assertEqual((repeat['inserted_unique'], repeat['updated_existing']), (0, 2))
++        self.assertEqual(inspect_copy(self.database)['fts5_integrity'], 'ok')
++
++    def test_crash_after_commit_before_checkpoint_replays_safely(self):
++        original = ted.atomic_json
++        def fail_checkpoint(path, value):
++            if Path(path).name == 'ted-checkpoint.json' and value.get('pending', {}).get('token') == 'next':
++                raise OSError('simulated crash saving checkpoint')
++            return original(path, value)
++        with patch.object(ted, 'atomic_json', side_effect=fail_checkpoint):
++            result = self.collect(lambda *a: {'notices': [notice()], 'iterationNextToken': 'next'})
++        self.assertEqual(result['state'], 'partial')
++        self.assertEqual(self.count(), 1)
++        result = self.collect(lambda *a: {'notices': [notice()]})
++        self.assertEqual(result['updated_existing'], 1)
++        self.assertEqual(self.count(), 1)
++
++    def test_repeated_page_ids_are_partial(self):
++        calls = []
++        def fetch(*args):
++            calls.append(1)
++            return {'notices': [notice()], 'iterationNextToken': str(len(calls))}
++        result = self.collect(fetch)
++        self.assertEqual(result['state'], 'partial')
++        self.assertIn('repeated page', result['last_error'])
++        self.assertEqual((result['pages'], self.count()), (1, 1))
++
++    def test_repeated_cursor_is_partial(self):
++        pages = iter([{'notices': [notice()], 'iterationNextToken': 'same'},
++                      {'notices': [notice('002')], 'iterationNextToken': 'same'}])
++        result = self.collect(lambda *a: next(pages))
++        self.assertEqual(result['state'], 'partial')
++        self.assertIn('repeated continuation', result['last_error'])
++        self.assertEqual(self.count(), 2)
++
++    def test_empty_page_completes(self):
++        result = self.collect(lambda *a: {'notices': []})
++        self.assertEqual(result['state'], 'completed')
++        self.assertEqual(result['received'], 0)
++
++    def test_bad_schema_does_not_become_zero_result_success(self):
++        for payload in ({}, [], {'notices': [{}]}, {'notices': 'oops'}):
++            with self.subTest(payload=payload):
++                result = self.collect(lambda *a: payload, resume=False)
++                self.assertEqual(result['state'], 'error')
++        self.assertEqual(self.count(), 0)
++
++    def test_transient_failure_then_success(self):
++        replies = iter([ted.TransportError('500', True, '0'), {'notices': [notice()]}])
++        def fetch(*args):
++            result = next(replies)
++            if isinstance(result, Exception): raise result
++            return result
++        result = self.collect(fetch)
++        self.assertEqual((result['state'], result['retries']), ('completed', 1))
++
++    def test_429_retry_after_exceeds_budget(self):
++        def fetch(*args): raise ted.TransportError('429', True, '3600')
++        started = time.monotonic()
++        result = self.collect(fetch)
++        self.assertEqual(result['state'], 'partial')
++        self.assertIn('retry delay', result['last_error'])
++        self.assertLess(time.monotonic()-started, 1)
++
++    def test_retries_are_finite(self):
++        calls = []
++        def fetch(*args):
++            calls.append(1)
++            raise ted.TransportError('500', True, '0')
++        result = self.collect(fetch)
++        self.assertEqual(len(calls), 2)
++        self.assertEqual(result['state'], 'error')
++
++    def test_cancel_between_pages_preserves_resume(self):
++        cancel = threading.Event()
++        def progress(state):
++            if state['pages'] == 1: cancel.set()
++        result = self.collect(lambda *a: {'notices': [notice()], 'iterationNextToken': 'next'},
++                              cancel=cancel, progress=progress)
++        self.assertEqual(result['state'], 'interrupted')
++        self.assertEqual(self.count(), 1)
++        self.assertEqual(json.loads((self.root/'ted-checkpoint.json').read_text())['pending']['token'], 'next')
++
++    def test_deadline_before_commit_leaves_database_unchanged(self):
++        self.cfg['total_seconds'] = .05
++        def fetch(*args):
++            time.sleep(.08)
++            return {'notices': [notice()]}
++        result = self.collect(fetch)
++        self.assertEqual(result['state'], 'partial')
++        self.assertEqual(self.count(), 0)
++
++    def test_delta_and_backfill_queries_and_watermark(self):
++        bodies = []
++        def fetch(body, *args):
++            bodies.append(body)
++            return {'notices': []}
++        result = self.collect(fetch)
++        self.assertIn('publication-date >=', bodies[-1]['query'])
++        prior_success = result['last_success_at']
++        self.collect(fetch, backfill=True)
++        self.assertEqual(bodies[-1]['query'], 'form-type = competition')
++        self.assertTrue(prior_success)
++        self.assertEqual(json.loads((self.root/'ted-checkpoint.json').read_text())['last_success_at'], prior_success)
++
++    def test_invalid_unlimited_settings_are_rejected(self):
++        for name, value in [('MAX_PAGES', '0'), ('RETRIES', '99'), ('TOTAL_SECONDS', 'NaN')]:
++            with patch.dict(os.environ, {'ATLAS_TED_'+name: value}):
++                with self.assertRaises(ValueError): ted.settings_from_env()
++
++    def test_bookmarks_country_and_fts_survive_upserts(self):
++        self.collect(lambda *a: {'notices': [notice()]})
++        with app.connect() as c:
++            c.execute("INSERT INTO bookmarks VALUES ('TED:001')")
++        self.collect(lambda *a: {'notices': [notice(**{'buyer-country': ''})]})
++        with app.connect() as c:
++            self.assertEqual(c.execute("SELECT country FROM opportunities").fetchone()[0], 'FR')
++            self.assertEqual(c.execute('SELECT COUNT(*) FROM bookmarks').fetchone()[0], 1)
++        self.assertEqual(inspect_copy(self.database)['fts5_integrity'], 'ok')
++
++    def test_fts_corruption_is_detected_and_not_rebuilt_on_startup(self):
++        self.collect(lambda *a: {'notices': [notice()]})
++        with app.connect() as c:
++            c.execute("INSERT INTO opportunities_fts(opportunities_fts) VALUES('delete-all')")
++        app.init()
++        with self.assertRaises(sqlite3.DatabaseError):
++            inspect_copy(self.database)
++        self.assertEqual(self.count(), 1)
++
++    def test_atomic_status_failed_replace_preserves_previous_and_cleans_temp(self):
++        path = self.root/'status.json'
++        atomic_json(path, {'state': 'old'})
++        with patch('collector_runtime.os.replace', side_effect=OSError('disk full')):
++            with self.assertRaises(OSError): atomic_json(path, {'state': 'new'})
++        self.assertEqual(json.loads(path.read_text()), {'state': 'old'})
++        self.assertEqual(list(self.root.glob('status.json.*')), [])
++
++    def test_interprocess_lock_and_kernel_release(self):
++        ctx = multiprocessing.get_context('spawn')
++        ready, release = ctx.Event(), ctx.Event()
++        worker = ctx.Process(target=hold_lock, args=(str(self.database), ready, release))
++        worker.start()
++        try:
++            self.assertTrue(ready.wait(4))
++            with self.assertRaises(AlreadyRunning):
++                with run_lock(self.database): pass
++            result = self.collect(lambda *a: self.fail('Network called while locked'))
++            self.assertEqual(result['state'], 'already_running')
++            with patch.object(app, 'boamp_fetch', side_effect=AssertionError('network called')):
++                self.assertEqual(app.ingest('BOAMP')['status'], 'already_running')
++        finally:
++            release.set()
++            worker.join(4)
++            if worker.is_alive(): worker.terminate(); worker.join()
++            worker.close()
++        with run_lock(self.database): pass  # PID file remains; kernel lock released.
++
++    def test_sync_status_exists_before_init_failure(self):
++        from types import SimpleNamespace
++        path = self.root/'sync-status.json'
++        def init():
++            self.assertEqual(json.loads(path.read_text())['state'], 'running')
++            raise RuntimeError('broken schema')
++        fake = SimpleNamespace(DB=self.database, SOURCES=[], init=init)
++        result = run(fake, path)
++        self.assertEqual(result['status'], 'failed')
++        self.assertIn('broken schema', result['last_error'])
++
++    def test_page_progress_updates_aggregate_status(self):
++        path = self.root/'sync-status.json'
++        def fetch(*args):
++            current = json.loads(path.read_text())
++            self.assertEqual(current['current_source'], 'TED')
++            self.assertIsNotNone(current['last_request_at'])
++            return {'notices': [notice()]}
++        original = app.run_ted_full
++        with patch.object(app, 'ingest', return_value={'status': 'ok', 'count': 0}), \
++             patch.object(app, 'run_ted_full', side_effect=lambda **kwargs: original(fetcher=fetch, settings=self.cfg, **kwargs)):
++            result = run(app, path)
++        self.assertEqual(result['status'], 'completed')
++        self.assertEqual(result['sources']['TED']['result']['inserted_unique'], 1)
++        self.assertEqual(result['sources']['TED']['result']['pages'], 1)
++        self.assertIn('APPROCH', result['deferred_sources'])
++
++    def test_bounded_boamp_ted_fixture_run_and_integrity(self):
++        original = app.run_ted_full
++        payload = {'results': [{'idweb': 'B001', 'objet': 'Public network', 'nomacheteur': 'City',
++                                'datelimitereponse': '2027-01-20'}]}
++        with patch.object(app, 'read_json', return_value=payload), \
++             patch.object(app, 'run_ted_full', side_effect=lambda **kw: original(
++                 settings=self.cfg, fetcher=lambda *a: {'notices': [notice()]}, **kw)):
++            result = run(app, self.root/'sync-status.json')
++        self.assertEqual(result['status'], 'completed')
++        self.assertEqual(result['delta_by_source'], {'BOAMP': 1, 'TED': 1})
++        with app.connect() as c:
++            self.assertEqual(c.execute("SELECT COUNT(*) FROM runs WHERE status='ok'").fetchone()[0], 2)
++        self.assertEqual(inspect_copy(self.database)['by_source'], {'BOAMP': 1, 'TED': 1})
++
++    def test_cli_exit_codes(self):
++        import sync_daily
++        for status, code in [('completed', 0), ('partial_error', 1), ('already_running', 2), ('interrupted', 1)]:
++            with patch('sync_engine.run', return_value={'status': status}), patch.object(sys, 'argv', ['sync_daily.py']):
++                self.assertEqual(sync_daily.main(), code)
++
++    def test_sigterm_publishes_final_interrupted_state(self):
++        script = '''import app,time
++app.init()
++app.run_ted_full(fetcher=lambda *a: (time.sleep(20) or {'notices':[]}))
++'''
++        environment = dict(os.environ, ATLAS_DB=str(self.database))
++        worker = subprocess.Popen([sys.executable, '-c', script], cwd=Path(__file__).parent,
++                                  env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
++        path = self.root/'ted-status.json'
++        try:
++            limit = time.monotonic()+4
++            while time.monotonic()<limit:
++                if path.exists() and json.loads(path.read_text()).get('last_request_at'): break
++                time.sleep(.02)
++            else: self.fail('Child did not start request')
++            worker.send_signal(signal.SIGTERM)
++            _, stderr = worker.communicate(timeout=3)
++            self.assertEqual(json.loads(path.read_text())['state'], 'interrupted', stderr.decode())
++            with run_lock(self.database): pass
++        finally:
++            if worker.poll() is None: worker.terminate(); worker.communicate(timeout=3)
++
++
++class LocalHTTP(BaseHTTPRequestHandler):
++    mode = 'valid'
++
++    def log_message(self, *args): pass
++
++    def do_POST(self):
++        self.rfile.read(int(self.headers.get('Content-Length', '0')))
++        if self.mode in ('429', '500'):
++            self.send_response(int(self.mode)); self.send_header('Retry-After', '2'); self.end_headers(); return
++        self.send_response(200)
++        if self.mode == 'stream': self.send_header('Content-Length', '1000000')
++        self.end_headers()
++        if self.mode == 'hang':
++            time.sleep(2); return
++        if self.mode == 'stream':
++            try:
++                for _ in range(100):
++                    self.wfile.write(b' '); self.wfile.flush(); time.sleep(.03)
++            except (BrokenPipeError, ConnectionResetError): pass
++            return
++        data = {'valid': b'{"notices":[]}', 'invalid': b'{bad', 'empty': b'', 'large': b'x'*500}
++        self.wfile.write(data[self.mode])
++
++
++class TransportTests(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.server = ThreadingHTTPServer(('127.0.0.1', 0), LocalHTTP)
++        cls.server.daemon_threads = True
++        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
++        cls.thread.start()
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.server.shutdown(); cls.server.server_close(); cls.thread.join()
++
++    def fetch(self, mode, budget=1):
++        LocalHTTP.mode = mode
++        cfg = ted.settings_from_env()
++        cfg.update(request_seconds=budget, read_seconds=.3, connect_seconds=.3, max_bytes=100)
++        with patch.dict(os.environ, {'NO_PROXY': '127.0.0.1', 'no_proxy': '127.0.0.1'}):
++            return ted.bounded_http({}, time.monotonic()+budget, threading.Event(), cfg,
++                                    endpoint=f'http://127.0.0.1:{self.server.server_port}/')
++
++    def test_valid_json(self):
++        self.assertEqual(self.fetch('valid'), {'notices': []})
++
++    def test_malformed_empty_and_oversize_responses(self):
++        for mode in ('invalid', 'empty', 'large'):
++            with self.subTest(mode=mode), self.assertRaises(ted.TransportError) as exc:
++                self.fetch(mode)
++            self.assertFalse(exc.exception.retryable)
++
++    def test_http_retry_after_and_500(self):
++        for mode in ('429', '500'):
++            with self.subTest(mode=mode), self.assertRaises(ted.TransportError) as exc:
++                self.fetch(mode)
++            self.assertTrue(exc.exception.retryable)
++            self.assertEqual(exc.exception.retry_after, '2')
++
++    def test_slow_stream_and_hanging_read_are_bounded(self):
++        for mode in ('stream', 'hang'):
++            started = time.monotonic()
++            with self.subTest(mode=mode), self.assertRaises(ted.TransportError):
++                self.fetch(mode, budget=.6)
++            self.assertLess(time.monotonic()-started, 1.5)
++        self.assertFalse(multiprocessing.active_children())
++
++
++if __name__ == '__main__': unittest.main()
+--- /dev/null
++++ b/test_installer_recovery.py
+@@ -0,0 +1,32 @@
++"""Validate the actual built installer contains the recovered runtime and no DB."""
++import importlib.util
++from pathlib import Path
++import plistlib
++import tempfile
++import unittest
++import zipfile
++
++ROOT = Path(__file__).resolve().parent
++
++
++class InstallerRecoveryTests(unittest.TestCase):
++    def test_build_resources_permissions_and_metadata(self):
++        spec = importlib.util.spec_from_file_location('atlas_installer_builder',
++                        ROOT/'packaging/build_collector_installer.py')
++        builder = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(builder)
++        with tempfile.TemporaryDirectory() as directory:
++            path = builder.build(Path(directory)/'installer.zip')
++            with zipfile.ZipFile(path) as archive:
++                prefix = 'Installer Atlas Collector.app/Contents/'
++                metadata = plistlib.loads(archive.read(prefix+'Info.plist'))
++                self.assertEqual(metadata['CFBundleExecutable'], 'start')
++                self.assertEqual(archive.getinfo(prefix+'MacOS/start').external_attr >> 16 & 0o111, 0o111)
++                for name in ['collector_runtime.py', 'ted_collector.py', 'sync_engine.py',
++                             'sync_daily.py', 'app.py', 'maintenance.py', 'ted_check.py', 'static/index.html']:
++                    self.assertEqual(archive.read(prefix+'Resources/'+name), (ROOT/name).read_bytes())
++                self.assertFalse(any(name.endswith(('.db','.sqlite','.sqlite3','-wal','-shm'))
++                                     for name in archive.namelist()))
++
++
++if __name__ == '__main__': unittest.main()
+--- /dev/null
++++ b/packaging/installer-start.sh
+@@ -0,0 +1,12 @@
++#!/bin/bash
++set -u
++HERE="$(cd "$(dirname "$0")/../Resources" && pwd)"
++/usr/bin/osascript -e 'display dialog "Installer les fichiers du collecteur réparé ? Python 3 est requis. Arrêtez les anciens processus avant de continuer. La planification restera désactivée jusqu’à validation ; aucune collecte ne sera déclenchée." buttons {"Annuler", "Installer"} default button "Installer" with title "Atlas Marchés — récupération"' >/dev/null 2>&1 || exit 0
++/bin/bash "$HERE/install.sh"
++CODE=$?
++if [ "$CODE" -eq 0 ]; then
++  /usr/bin/osascript -e 'display dialog "Fichiers installés. Aucune collecte lancée, aucun LaunchAgent activé. Suivre RECOVERY.md pour les contrôles avant toute planification." buttons {"OK"} with title "Atlas Marchés"' >/dev/null 2>&1
++else
++  /usr/bin/osascript -e 'display dialog "Installation arrêtée. Consultez ~/AtlasMarches/logs/installer.log. Les processus existants doivent être arrêtés avant installation." buttons {"OK"} with title "Atlas Marchés"' >/dev/null 2>&1
++fi
++exit "$CODE"
+--- /dev/null
++++ b/packaging/build_collector_installer.py
+@@ -0,0 +1,39 @@
++"""Build the script-based macOS collector installer ZIP, without activating it.
++
++This is NOT a standalone Python runtime, signed native app, or notarized DMG.
++"""
++from pathlib import Path
++import plistlib
++import zipfile
++
++ROOT = Path(__file__).resolve().parents[1]
++FILES = ['app.py', 'sync_daily.py', 'sync_engine.py', 'collector_runtime.py',
++         'ted_collector.py', 'maintenance.py', 'ted_check.py', 'approch.py', 'eu_ft.py',
++         'sources.json', 'buyers.json', 'feeds.json', 'access_registry.json',
++         'install.sh', 'RECOVERY.md']
++
++
++def build(destination):
++    destination = Path(destination)
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    prefix = 'Installer Atlas Collector.app/Contents/'
++    with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
++        def add(name, data, executable=False):
++            entry = zipfile.ZipInfo(prefix + name)
++            entry.create_system = 3
++            entry.external_attr = (0o100755 if executable else 0o100644) << 16
++            archive.writestr(entry, data, compress_type=zipfile.ZIP_DEFLATED)
++        add('Info.plist', plistlib.dumps({'CFBundleIdentifier': 'fr.atlasmarches.collector.installer',
++            'CFBundleName': 'Installer Atlas Collector', 'CFBundleExecutable': 'start',
++            'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1.1',
++            'CFBundleShortVersionString': '1.1', 'LSUIElement': False}))
++        add('MacOS/start', (ROOT/'packaging/installer-start.sh').read_bytes(), executable=True)
++        for name in FILES:
++            add('Resources/'+name, (ROOT/name).read_bytes(), executable=name=='install.sh')
++        for path in sorted((ROOT/'static').rglob('*')):
++            if path.is_file(): add('Resources/'+str(path.relative_to(ROOT)), path.read_bytes())
++    return destination
++
++
++if __name__ == '__main__':
++    print(build(ROOT/'release/Atlas-Collector-Recovery-v1-macOS-unsigned.zip'))
+--- /dev/null
++++ b/RECOVERY.md
+@@ -0,0 +1,151 @@
++# TED collector recovery
++
++The uploaded installer is the source baseline. These changes implement the
++launcher’s recovery requirements on that source; they have not been installed
++on the original Mac. The production database, backups and PID 7200 described
++in the reference documents are not available in this Linux environment.
++
++## Behavior
++
++- All TED collection entrypoints use the same bounded collector. The old
++  `--ted-all-open` option remains as a compatibility alias for the routine delta
++  run; use `--ted-backfill` explicitly for the bounded ACTIVE competition backfill.
++- Default routine query: competition notices published since the last completed
++  window, overlapping two days. First run uses 14 days. A partial run retains
++  its exact query and continuation token, and never advances the success watermark.
++  Delta and backfill have separate checkpoints.
++- The query fields, publication-date syntax, ACTIVE scope and iteration token
++  protocol come from the uploaded source. Their current live API semantics have
++  not been validated here because the single staging request failed to connect.
++  The publication window cannot detect changes to arbitrarily old notices:
++  use a separately controlled backfill when that coverage is required.
++- Each HTTP attempt runs in a disposable subprocess. Parent-enforced deadlines
++  stop a hanging/slow stream and close its socket. urllib uses the stricter of
++  the configured connect/read limits for both socket operations. TLS validation
++  and inherited proxy/CA configuration remain enabled.
++- Retryable transport errors, HTTP 429 and 500/502/503/504 have finite retries.
++  Retry-After seconds and HTTP dates are respected; a delay beyond the remaining
++  budget returns partial instead of retrying early. Error bodies are not read.
++  Malformed JSON diagnostics include byte count and SHA256, never raw payloads.
++- Every page is committed by idempotent UPSERT before its checkpoint advances.
++  A crash between commit and checkpoint safely replays that page. Bookmarks and
++  existing country-preservation semantics are retained. Counters distinguish
++  received, valid, inserted_unique, updated_existing and skipped. updated_existing
++  counts upserted existing records, including identical records; it is not a
++  count of changed business fields. Duplicate IDs within one page count as skipped.
++- Repeated ID-page signatures or cursor cycles produce partial/error outcomes.
++  A repeated cursor is retained for inspection rather than discarded as success.
++  If an API cursor expires, inspect the failure and use `--ted-no-resume` to replay
++  the unchanged delta window from its beginning; UPSERTs prevent duplicates.
++- Shared kernel locks cover manual TED, web ingestion, desktop sync and scheduled
++  sync against the same resolved DB. Never remove a lock file to break a lock.
++  Process exit releases it; an old PID in an unlocked file does not block a run.
++- Status JSON uses unique temporary files, fsync and atomic replacement. It is
++  written before network work and after each page, alongside flushed JSON log lines.
++  SIGINT/SIGTERM produce interrupted status and preserve committed pages.
++- APProch and EU Funding/Grants are deferred by default, with explicit unrun status.
++  `sync_daily.py --include-optional` is for their separate diagnostic lane; parser
++  failures propagate, never become successful empty imports.
++
++## Configuration
++
++All names below have prefix `ATLAS_TED_`:
++
++| Suffix | Default | Meaning |
++| --- | ---: | --- |
++| TOTAL_SECONDS | 180 | Total TED collection budget |
++| REQUEST_SECONDS | 30 | Wall-clock budget per HTTP attempt |
++| CONNECT_SECONDS | 10 | Maximum socket connect timeout |
++| READ_SECONDS | 10 | Maximum socket read timeout |
++| MAX_PAGES | 20 | Finite pages per invocation; zero is rejected |
++| PAGE_SIZE | 100 | Rows requested per page; maximum 100 |
++| RETRIES | 2 | Additional attempts; maximum 5 |
++| MAX_BYTES | 8000000 | Response byte cap |
++| OVERLAP_DAYS | 2 | Completed delta-window overlap |
++| INITIAL_DAYS | 14 | Initial delta lookback |
++
++State is beside the selected `ATLAS_DB`: `sync-status.json`, `ted-status.json`,
++`ted-checkpoint.json`, `ted-backfill-checkpoint.json` and `atlas.db.collector.lock`.
++Checkpoints contain opaque API continuation tokens; keep them local with the DB.
++Do not copy checkpoint data into public reports.
++
++## Validation and manual operation
++
++From the repository or installed collector directory, with collectors stopped:
++
++```sh
++python3 -m unittest discover -p 'test_*.py' -v
++python3 maintenance.py /path/to/atlas.db
++```
++
++Maintenance opens the selected source read-only, takes a consistent SQLite backup
++into a temporary directory, and runs SQLite and FTS5 rank=1 integrity checks only
++on that copy. It never rebuilds an index or touches WAL/-shm manually. Production
++backups and the original Mac's integrity must still be verified before deployment.
++
++The former external-content FTS count comparison could not detect index corruption.
++Startup no longer rebuilds automatically. Tests demonstrate that corrupted postings
++are detected on a copy and are not silently repaired by restart. This does not prove
++the historical cause of corruption on the Mac; that requires its trigger schema,
++write paths and database. Existing data without an FTS index now fails explicitly
++and requires a separate, approved maintenance procedure.
++
++For one bounded LIVE staging request after network access is applied:
++
++```sh
++python3 ted_check.py --report /path/outside/repo/ted-live-check.json
++```
++
++This command uses a disposable DB, one page of two rows, no retries, a 20-second
++total budget and a 15-second request budget. It never changes production data.
++A page cap with a continuation token is a truthful partial outcome (nonzero exit).
++The staging script is a live check, not an offline dry-run.
++
++After staging and backups are verified, manual core synchronization is:
++
++```sh
++ATLAS_DB=/path/to/approved/database python3 sync_daily.py
++```
++
++Stop the exact PID reported in status gracefully with SIGINT or SIGTERM, then wait
++for exit and verify final status. Do not signal a historical PID without verifying
++its command and start time. Do not use kill -9 or delete WAL/-shm. UI and collector
++are separate processes; the UI is not needed by `sync_daily.py`.
++
++Exit codes: sync CLI 0=completed, 1=failed/partial/interrupted, 2=lock already held.
++`app.py --ted-all-open` and `--ted-backfill` use the same outcome codes.
++
++## Build and deployment gate
++
++`python3 packaging/build_collector_installer.py` builds an unsigned script-based
++macOS installer ZIP. It requires an existing Python 3 installation on the Mac.
++Its dialogs accurately state that no collection is started. The installer refuses
++to replace a loaded collector or a detected running collector process, copies the
++new runtime modules, and leaves the four-hour LaunchAgent unloaded with RunAtLoad
++false. It does not modify the user's database. It is not a self-contained native
++runtime, a signed/notarized DMG, or a macOS-validated binary.
++
++The existing `packaging/build_macos_release.sh` builds the native desktop app/DMG
++on macOS with its optional build dependencies. That build cannot be executed on
++this Linux host and remains unverified. No Actions workflow was dispatched.
++
++**NO-GO for four-hour scheduled operation.** The full 41-test suite and isolated
++BOAMP+TED fixture run pass; a live staging attempt received zero pages and failed
++to connect. The current restricted policy omits required hosts. Draft additions
++are `api.ted.europa.eu`, `boamp-datadila.opendatasoft.com`, `docs.ted.europa.eu`.
++Saving a draft does not apply those changes or validate API semantics.
++
++Before activation: confirm the actual installed source matches the reviewed patch;
++stop/verify the real Mac process; confirm and preserve the named backups; record
++counts by source; pass bounded live TED+BOAMP collection and copied integrity
++checks; inspect status, exit codes and log paths. Only then load the reviewed
++`fr.atlasmarches.collector` plist and verify `launchctl print` reports interval
++14400 with correct stdout/stderr paths. No scheduler activation occurred here.
++
++The cloud DB remains 94 APProch forecast projects, TED=0 and BOAMP=0. There are
++83 catalog entries, zero enabled feeds and no remotely verified connectors in
++this cloud session. Manual spreadsheet import is verified; remote APProch,
++EU_FT_TENDERS and EU_FT_GRANTS parsing remains a separate unverified lane.
++
++See `docs/recovery-report.json`, `docs/recovery-tests.txt`,
++`docs/recovery.patch` and `docs/recovery-hashes.json` for the exact evidence.

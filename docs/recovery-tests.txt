@@ -1,0 +1,52 @@
+test_data_path_outside_bundle (test_distribution.DistributionTests.test_data_path_outside_bundle) ... ok
+test_no_bundled_database (test_distribution.DistributionTests.test_no_bundled_database) ... ok
+test_required_files (test_distribution.DistributionTests.test_required_files) ... ok
+test_multipart (test_eu_ft.EUFTTests.test_multipart) ... ok
+test_normalize_reject_missing (test_eu_ft.EUFTTests.test_normalize_reject_missing) ... ok
+test_query_categories (test_eu_ft.EUFTTests.test_query_categories) ... ok
+test_unknown_schema_fails_closed (test_eu_ft.EUFTTests.test_unknown_schema_fails_closed) ... ok
+test_upsert_and_separate_storage (test_eu_ft.EUFTTests.test_upsert_and_separate_storage) ... ok
+test_build_resources_permissions_and_metadata (test_installer_recovery.InstallerRecoveryTests.test_build_resources_permissions_and_metadata) ... ok
+test_catalog (test_integration.AtlasTests.test_catalog) ... ok
+test_countries (test_integration.AtlasTests.test_countries) ... ok
+test_feed_disabled (test_integration.AtlasTests.test_feed_disabled) ... ok
+test_search_combined (test_integration.AtlasTests.test_search_combined) ... ok
+test_search_and_filters (test_search_fts.SearchIndexTests.test_search_and_filters) ... ok
+test_counts_and_failure_visible (test_sync_engine.SyncTests.test_counts_and_failure_visible) ... {"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": null, "status": "running", "state": "running", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": null, "page": 0, "sources": {}, "source_failures": {}, "catalog_count": 3, "enabled_feeds": [], "notes": [], "last_success_at": null}
+{"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": null, "status": "running", "state": "running", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": "BOAMP", "page": 0, "sources": {}, "source_failures": {}, "catalog_count": 3, "enabled_feeds": [], "notes": ["APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.", "Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé."], "last_success_at": null, "before": {"total": 1, "by_source": {"TED": 1}, "latest_retrieved": "2026-01-01"}, "deferred_sources": ["APPROCH", "EU_FT_TENDERS", "EU_FT_GRANTS"]}
+{"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": null, "status": "running", "state": "running", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": "BOAMP", "page": 0, "sources": {"BOAMP": {"status": "ok", "duration_seconds": 0.0, "result": {"status": "ok", "count": 1}}}, "source_failures": {}, "catalog_count": 3, "enabled_feeds": [], "notes": ["APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.", "Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé."], "last_success_at": null, "before": {"total": 1, "by_source": {"TED": 1}, "latest_retrieved": "2026-01-01"}, "deferred_sources": ["APPROCH", "EU_FT_TENDERS", "EU_FT_GRANTS"], "progress_snapshot": {"total": 2, "by_source": {"BOAMP": 1, "TED": 1}, "latest_retrieved": "2026-10-31"}}
+{"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": null, "status": "running", "state": "running", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": "TED", "page": 0, "sources": {"BOAMP": {"status": "ok", "duration_seconds": 0.0, "result": {"status": "ok", "count": 1}}}, "source_failures": {}, "catalog_count": 3, "enabled_feeds": [], "notes": ["APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.", "Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé."], "last_success_at": null, "before": {"total": 1, "by_source": {"TED": 1}, "latest_retrieved": "2026-01-01"}, "deferred_sources": ["APPROCH", "EU_FT_TENDERS", "EU_FT_GRANTS"], "progress_snapshot": {"total": 2, "by_source": {"BOAMP": 1, "TED": 1}, "latest_retrieved": "2026-10-31"}}
+{"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": null, "status": "partial_error", "state": "running", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": "TED", "page": 0, "sources": {"BOAMP": {"status": "ok", "duration_seconds": 0.0, "result": {"status": "ok", "count": 1}}, "TED": {"status": "error", "duration_seconds": 0.0, "result": {"state": "error", "error": "TED refused"}}}, "source_failures": {"TED": "TED refused"}, "catalog_count": 3, "enabled_feeds": [], "notes": ["APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.", "Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé."], "last_success_at": null, "before": {"total": 1, "by_source": {"TED": 1}, "latest_retrieved": "2026-01-01"}, "deferred_sources": ["APPROCH", "EU_FT_TENDERS", "EU_FT_GRANTS"], "progress_snapshot": {"total": 2, "by_source": {"BOAMP": 1, "TED": 1}, "latest_retrieved": "2026-10-31"}}
+{"event": "sync_progress", "schema_version": 1, "started": "2026-11-01T12:12:04.801204+00:00", "finished": "2026-11-01T12:12:04.802586+00:00", "status": "partial_error", "state": "partial_error", "pid": 9416, "database": "/tmp/tmpz2knuhk3/atlas.db", "current_source": "TED", "page": 0, "sources": {"BOAMP": {"status": "ok", "duration_seconds": 0.0, "result": {"status": "ok", "count": 1}}, "TED": {"status": "error", "duration_seconds": 0.0, "result": {"state": "error", "error": "TED refused"}}}, "source_failures": {"TED": "TED refused"}, "catalog_count": 3, "enabled_feeds": [], "notes": ["APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.", "Aucun flux RSS/Atom supplémentaire activé : feeds.json est vide ou désactivé."], "last_success_at": null, "before": {"total": 1, "by_source": {"TED": 1}, "latest_retrieved": "2026-01-01"}, "deferred_sources": ["APPROCH", "EU_FT_TENDERS", "EU_FT_GRANTS"], "progress_snapshot": {"total": 2, "by_source": {"BOAMP": 1, "TED": 1}, "latest_retrieved": "2026-10-31"}, "after": {"total": 2, "by_source": {"BOAMP": 1, "TED": 1}, "latest_retrieved": "2026-10-31"}, "new_unique_records": 1, "delta_by_source": {"TED": 0, "BOAMP": 1}}
+ok
+test_429_retry_after_exceeds_budget (test_ted_recovery.RecoveryTests.test_429_retry_after_exceeds_budget) ... ok
+test_atomic_status_failed_replace_preserves_previous_and_cleans_temp (test_ted_recovery.RecoveryTests.test_atomic_status_failed_replace_preserves_previous_and_cleans_temp) ... ok
+test_bad_schema_does_not_become_zero_result_success (test_ted_recovery.RecoveryTests.test_bad_schema_does_not_become_zero_result_success) ... ok
+test_bookmarks_country_and_fts_survive_upserts (test_ted_recovery.RecoveryTests.test_bookmarks_country_and_fts_survive_upserts) ... ok
+test_bounded_boamp_ted_fixture_run_and_integrity (test_ted_recovery.RecoveryTests.test_bounded_boamp_ted_fixture_run_and_integrity) ... ok
+test_cancel_between_pages_preserves_resume (test_ted_recovery.RecoveryTests.test_cancel_between_pages_preserves_resume) ... ok
+test_cli_exit_codes (test_ted_recovery.RecoveryTests.test_cli_exit_codes) ... ok
+test_crash_after_commit_before_checkpoint_replays_safely (test_ted_recovery.RecoveryTests.test_crash_after_commit_before_checkpoint_replays_safely) ... ok
+test_deadline_before_commit_leaves_database_unchanged (test_ted_recovery.RecoveryTests.test_deadline_before_commit_leaves_database_unchanged) ... ok
+test_delta_and_backfill_queries_and_watermark (test_ted_recovery.RecoveryTests.test_delta_and_backfill_queries_and_watermark) ... ok
+test_empty_page_completes (test_ted_recovery.RecoveryTests.test_empty_page_completes) ... ok
+test_fts_corruption_is_detected_and_not_rebuilt_on_startup (test_ted_recovery.RecoveryTests.test_fts_corruption_is_detected_and_not_rebuilt_on_startup) ... ok
+test_incremental_commit_counters_resume_and_idempotency (test_ted_recovery.RecoveryTests.test_incremental_commit_counters_resume_and_idempotency) ... ok
+test_interprocess_lock_and_kernel_release (test_ted_recovery.RecoveryTests.test_interprocess_lock_and_kernel_release) ... ok
+test_invalid_unlimited_settings_are_rejected (test_ted_recovery.RecoveryTests.test_invalid_unlimited_settings_are_rejected) ... ok
+test_page_progress_updates_aggregate_status (test_ted_recovery.RecoveryTests.test_page_progress_updates_aggregate_status) ... ok
+test_repeated_cursor_is_partial (test_ted_recovery.RecoveryTests.test_repeated_cursor_is_partial) ... ok
+test_repeated_page_ids_are_partial (test_ted_recovery.RecoveryTests.test_repeated_page_ids_are_partial) ... ok
+test_retries_are_finite (test_ted_recovery.RecoveryTests.test_retries_are_finite) ... ok
+test_sigterm_publishes_final_interrupted_state (test_ted_recovery.RecoveryTests.test_sigterm_publishes_final_interrupted_state) ... ok
+test_sync_status_exists_before_init_failure (test_ted_recovery.RecoveryTests.test_sync_status_exists_before_init_failure) ... ok
+test_transient_failure_then_success (test_ted_recovery.RecoveryTests.test_transient_failure_then_success) ... ok
+test_http_retry_after_and_500 (test_ted_recovery.TransportTests.test_http_retry_after_and_500) ... ok
+test_malformed_empty_and_oversize_responses (test_ted_recovery.TransportTests.test_malformed_empty_and_oversize_responses) ... ok
+test_slow_stream_and_hanging_read_are_bounded (test_ted_recovery.TransportTests.test_slow_stream_and_hanging_read_are_bounded) ... ok
+test_valid_json (test_ted_recovery.TransportTests.test_valid_json) ... ok
+
+----------------------------------------------------------------------
+Ran 41 tests in 2.020s
+
+OK

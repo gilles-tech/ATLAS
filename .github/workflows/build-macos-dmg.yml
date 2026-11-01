@@ -1,0 +1,64 @@
+name: Atlas Marches — macOS DMG
+on:
+  workflow_dispatch:
+  push:
+    tags: ['mac-v*']
+permissions:
+  contents: read
+jobs:
+  dmg:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            label: AppleSilicon
+            arch: arm64
+          - runner: macos-15-intel
+            label: Intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Run application tests
+        shell: bash
+        run: |
+          python3 -m py_compile app.py desktop.py desktop_autosync.py
+          python3 -m unittest discover -p 'test_*.py' -v
+      - name: Install build dependencies
+        run: python3 -m pip install -r requirements-desktop.txt
+      - name: Create standalone .app and DMG
+        run: bash packaging/build_macos_release.sh
+      - name: Smoke-test the standalone runtime
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          report = Path('release/standalone-check.json').resolve()
+          subprocess.run(['dist/AtlasMarches.app/Contents/MacOS/AtlasMarches',
+                          '--self-check', '--report', str(report)], check=True, timeout=60)
+          result = json.loads(report.read_text())
+          assert result['status'] == 'passed', result
+          PY
+      - name: Inspect package
+        shell: bash
+        run: |
+          test -d dist/AtlasMarches.app
+          test -f "release/AtlasMarches-macOS-${{ matrix.arch }}-unsigned.dmg"
+          hdiutil imageinfo "release/AtlasMarches-macOS-${{ matrix.arch }}-unsigned.dmg" | head -25
+          shasum -a 256 "release/AtlasMarches-macOS-${{ matrix.arch }}-unsigned.dmg" > "release/SHA256-${{ matrix.arch }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlasMarches-macOS-${{ matrix.label }}-unsigned
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14

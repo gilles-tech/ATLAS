@@ -1,0 +1,12 @@
+{
+  "purpose": "Native standalone macOS DMG build preparation, after the recovery source snapshot",
+  "changes": "Disable first-launch scheduler prompt until recovery gates pass; add built-runtime self-check and CI execution",
+  "validation": "41 source tests passed in 2.062 seconds; desktop.py and standalone_check.py compile",
+  "built_runtime_check": "Will run on macOS CI against the bundled executable: webview import, bundled assets, temporary SQLite/FTS5, UI/API and multiprocessing HTTP worker",
+  "file_sha256": {
+    "desktop.py": "d9bbcfc04d86e64c0add3af61ff186b47f602789dacb05c2b1e50b0d6d272c98",
+    "standalone_check.py": "0a3feecd442b9a5cc193ee244068c7e72c8c0312fd969677409215dd507c410d",
+    ".github/workflows/build-macos-dmg.yml": "04c6707fbdd61e1c75df7d65e089af3a28eb4f0feac2806b257b5eb9ec6eca9e"
+  },
+  "prior_recovery_reports": "Historical recovery snapshot; see separate macos-build-preparation.patch for subsequent changes"
+}

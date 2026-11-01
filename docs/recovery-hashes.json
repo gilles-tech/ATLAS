@@ -1,0 +1,70 @@
+{
+  ".gitignore": {
+    "before_sha256": "4493be78d721afccff44c649335e30aff4466600030e0ccb7ccebd7cde21757f",
+    "after_sha256": "a3d64e259d4df6985efb91bee007d28d3ed63dd1941bd4db552482d2731ae347"
+  },
+  "app.py": {
+    "before_sha256": "3e2b89cd9c19bebc1632f2338887753eef894760d21cbed76c53d4d85aa9d8b2",
+    "after_sha256": "7b35243e285774126f0f70920fce63069fc26608aa18545c54c6e90f8e9a2f57"
+  },
+  "sync_engine.py": {
+    "before_sha256": "67ba0d633dc907bb891c7815aa41bf2faec85c1a6157d468fd0bc2c6daa623c5",
+    "after_sha256": "66d511e7cf5ab5846f45639b02502172beea8311b9409d34bf38191b379b5004"
+  },
+  "sync_daily.py": {
+    "before_sha256": "8857e781965c1867600d26df5af1cf16afcc77e5fbfab53dd2a3a65c2eb9a538",
+    "after_sha256": "6577441a33317a04eb90627a6a0c19fdc39b2537f71057d10ea0f46d94d8203b"
+  },
+  "desktop.py": {
+    "before_sha256": "b55220085c18425cbe1316262d9ae721f4c3f60efa2d25003d590feae44a5291",
+    "after_sha256": "3bc6fa8c7fedcb345930d1a8c3208a5288cb2c164b1d917bbb8c6763f8427538"
+  },
+  "install.sh": {
+    "before_sha256": "25cfbd88bc1d7bfb7cb00d49ed00464590c7f90d8bd860c5e8a5ab4fb1c34a6d",
+    "after_sha256": "6e01b393cca7153c7be53731f140fa7d598c555f35a8c99ff3f9bc0a91b02e68"
+  },
+  "packaging/build.py": {
+    "before_sha256": "ae43071da05e0e77d265693b714c0ea12a582b6896b2afe2c9f545daa6fad5bd",
+    "after_sha256": "bf4ffa194eecb785a648a8e332b83a17cc9cd49917e16a8523ea003dad0f8c3d"
+  },
+  "README.md": {
+    "before_sha256": "44e9b4b0b8a78d6111044af27e1a37e631b1cff1379c9cf6b77f3bc457aafc32",
+    "after_sha256": "ab03eab30b0c2776faea57b976f531a35ebba27e56a5e1966d15127574294ec7"
+  },
+  "collector_runtime.py": {
+    "before_sha256": null,
+    "after_sha256": "c237b2715928b3b27c7eb37d9b8d95e88756b9aa189fa7fcef8c9d85d9e7d313"
+  },
+  "ted_collector.py": {
+    "before_sha256": null,
+    "after_sha256": "cdb0d11126544a4b4cb52ba92efc0cd3b285d97b9687cbd8e6d02dab004f801d"
+  },
+  "maintenance.py": {
+    "before_sha256": null,
+    "after_sha256": "8764a71b9fae4dd038fe642375b150566a0f1e51b008bd0eb708e67d02edf4d1"
+  },
+  "ted_check.py": {
+    "before_sha256": null,
+    "after_sha256": "83a996aae9ba787c62446e585bdf910cc17f61a010c3f629c5b0c3fe8e525f9c"
+  },
+  "test_ted_recovery.py": {
+    "before_sha256": null,
+    "after_sha256": "2cdca9e33692bf16ea4c96afdb18fba9be8ce15d59a8ed8db33e6e4f889ec098"
+  },
+  "test_installer_recovery.py": {
+    "before_sha256": null,
+    "after_sha256": "cf07b2e6ae899160bd8920387f0f0d0541dad18dfaf8b1e5b9a6368b266c9d9e"
+  },
+  "packaging/installer-start.sh": {
+    "before_sha256": null,
+    "after_sha256": "a2ba25b5331e00252f6d3021cc04bf1b1bc80fb8b99b6b9247b310683d6d0c51"
+  },
+  "packaging/build_collector_installer.py": {
+    "before_sha256": null,
+    "after_sha256": "544cf03967b68748477944b0cbbcb6744e48db6eab015781170e04aa333565df"
+  },
+  "RECOVERY.md": {
+    "before_sha256": null,
+    "after_sha256": "85c9888f1c8bdf86c7015a1d4ffb4ebd4f162d6e1f217bf164f7e9081331ad50"
+  }
+}

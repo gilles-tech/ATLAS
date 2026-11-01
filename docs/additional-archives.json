@@ -1,0 +1,69 @@
+{
+  "atlas-marches-live-sync-fix.zip": {
+    "sha256": "91a3a968afdf7ddf06c965eaf32210786cd3fcf9798f3e2381640045cd81c30f",
+    "added": [
+      "README-CORRECTIF-083.md",
+      "install_sync_now.command",
+      "README-STABILITE-V3.md",
+      "README-SEARCH-FIX.md",
+      "test_search_fts.py",
+      "DIAGNOSTIC-COLLECTE.md",
+      "README-INSTALLATION-SANS-TERMINAL.md",
+      "README-MIGRATION.md",
+      "README-086.md",
+      "build_macos.command",
+      "feeds.example.json",
+      "README-085.md",
+      "README-INTEGRATIONS.md",
+      "desktop_autosync.py",
+      "test_eu_ft.py",
+      "ACTIVER-SYNCHRO.command",
+      "AUDIT-ET-PLAN.md",
+      "README-MACOS-FIRST.md",
+      "README-EU-FT.md",
+      "README-DMG.md",
+      "README-FIX-FRANCE.md",
+      "README-RECOVERY-V2.md",
+      "install_daily_mac.sh",
+      "README-ETAT-COLLECTE.md",
+      "test_integration.py",
+      "README-DEMARRAGE.md",
+      "install_daily_desktop_mac.command",
+      "README-CORRECTIF-084.md",
+      "desktop.py",
+      "README-SYNC-4H.md",
+      "README-DESKTOP.md",
+      "README-GITHUB-START.md",
+      "CHANGELOG-082.md",
+      "test_sync_engine.py",
+      "diagnostic_sync.command",
+      "requirements-desktop.txt",
+      "README-APPROCH.md",
+      "test_distribution.py",
+      "README-SYNC-DAILY.md",
+      "README-08.md",
+      "CHANGELOG.md",
+      "packaging/windows.iss",
+      "packaging/build.py",
+      "packaging/build_macos_release.sh",
+      ".github/workflows/build-macos-dmg.yml",
+      ".github/workflows/build-desktop.yml"
+    ],
+    "different_preserved": [
+      "README.md",
+      ".gitignore"
+    ]
+  },
+  "atlas-marches-eu-funding-tenders-v1.zip": {
+    "sha256": "b7151aeadaba38334607e62de6a471ddddcf6942c08ca2c3b0ccff51639068dd",
+    "added": [],
+    "different_preserved": [
+      "static/index.html",
+      "app.py",
+      "README.md",
+      "sources.json",
+      ".gitignore",
+      "sync_engine.py"
+    ]
+  }
+}

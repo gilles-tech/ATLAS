@@ -1,0 +1,157 @@
+[
+  {
+    "id": "CDC",
+    "name": "Caisse des Dépôts",
+    "country": "FR",
+    "aliases": [
+      "caisse des dépôts",
+      "caisse des depots",
+      "caisse des dépôts et consignations",
+      "cdc - caisse",
+      "cdc habitat"
+    ],
+    "url": "https://www.caissedesdepots.fr/informations/les-marches-publics-de-la-caisse-des-depots",
+    "platform": "PLACE",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "BPIFRANCE",
+    "name": "Bpifrance",
+    "country": "FR",
+    "aliases": [
+      "bpifrance",
+      "bpi france",
+      "bpifrance financement",
+      "bpifrance investissement"
+    ],
+    "url": "https://www.achatpublic.com/sdm/ent2/gen/index.jsp",
+    "platform": "achatpublic.com",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "BANQUE_FRANCE",
+    "name": "Banque de France",
+    "country": "FR",
+    "aliases": [
+      "banque de france",
+      "bank of france"
+    ],
+    "url": "https://achats-banquedefrance.safetender.com/",
+    "platform": "SafeTender",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "BEI",
+    "name": "Banque européenne d’investissement",
+    "country": "EU",
+    "aliases": [
+      "banque européenne d’investissement",
+      "european investment bank",
+      "european investment bank (eib)",
+      "eib"
+    ],
+    "url": "https://www.eib.org/fr/about/procurement/index",
+    "platform": "BEI / TED",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "BERD",
+    "name": "Banque européenne pour la reconstruction et le développement",
+    "country": "EU",
+    "aliases": [
+      "european bank for reconstruction and development",
+      "european bank for reconstruction & development",
+      "ebrd",
+      "banque européenne pour la reconstruction"
+    ],
+    "url": "https://ecepp.ebrd.com/",
+    "platform": "ECEPP",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "CDC_TERRITOIRES",
+    "name": "Banque des Territoires",
+    "country": "FR",
+    "aliases": [
+      "banque des territoires"
+    ],
+    "url": "https://www.banquedesterritoires.fr/",
+    "platform": "CDC / PLACE",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "CDC_HABITAT",
+    "name": "CDC Habitat",
+    "country": "FR",
+    "aliases": [
+      "cdc habitat",
+      "cdc-habitat"
+    ],
+    "url": "https://www.cdc-habitat.fr/",
+    "platform": "Profils de groupe",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "LA_POSTE",
+    "name": "Groupe La Poste",
+    "country": "FR",
+    "aliases": [
+      "la poste",
+      "groupe la poste",
+      "la banque postale",
+      "banque postale"
+    ],
+    "url": "https://www.lapostegroupe.com/",
+    "platform": "Portails fournisseurs",
+    "mode": "buyer_watch"
+  },
+  {
+    "id": "BNP",
+    "name": "BNP Paribas",
+    "country": "FR",
+    "aliases": [
+      "bnp paribas"
+    ],
+    "url": "https://group.bnpparibas/",
+    "platform": "Achats privés / portail fournisseurs",
+    "mode": "supplier_portal"
+  },
+  {
+    "id": "SOCIETE_GENERALE",
+    "name": "Société Générale",
+    "country": "FR",
+    "aliases": [
+      "société générale",
+      "societe generale"
+    ],
+    "url": "https://www.societegenerale.com/",
+    "platform": "Achats privés / portail fournisseurs",
+    "mode": "supplier_portal"
+  },
+  {
+    "id": "CREDIT_AGRICOLE",
+    "name": "Crédit Agricole",
+    "country": "FR",
+    "aliases": [
+      "crédit agricole",
+      "credit agricole"
+    ],
+    "url": "https://www.credit-agricole.com/",
+    "platform": "Achats privés / portail fournisseurs",
+    "mode": "supplier_portal"
+  },
+  {
+    "id": "BPCE",
+    "name": "Groupe BPCE",
+    "country": "FR",
+    "aliases": [
+      "groupe bpce",
+      "bpce",
+      "banque populaire",
+      "caisse d’epargne"
+    ],
+    "url": "https://www.groupebpce.com/",
+    "platform": "Achats privés / portail fournisseurs",
+    "mode": "supplier_portal"
+  }
+]

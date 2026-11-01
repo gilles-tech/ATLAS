@@ -1,0 +1,15 @@
+ATLAS MARCHÉS — CODEX TED COLLECTOR RECOVERY v1
+
+Read the complete companion instructions:
+ATLAS-CODEX-TED-COLLECTOR-INSTRUCTIONS-v1.md
+
+Act as the IMPLEMENTING ENGINEER, not an auditor. Work from actual local files in:
+~/Library/Application Support/AtlasMarches/collector/
+
+First verify whether the prior sync_daily.py PID 7200 is still running. Stop it gracefully before editing code; preserve the WAL and the 108,346 current notices. Confirm backup existence and inspect the full TED code path.
+
+Implement bounded TED HTTP reads, overall collection deadline, finite/idempotent pagination and retries, incremental persistence, crash-safe atomic sync-status.json, real-time progress logs, run locking, explicit exit statuses and focused automated tests. Do not invent API endpoints or trust old project copies. Fix only what source evidence supports.
+
+Validate on isolated SQLite/temp fixtures; make one bounded live check only if safe. Do NOT reactivate the 4-hour LaunchAgent before passing gates. Preserve BOAMP and the web UI; report APProch and EU Funding parser faults separately without faking success.
+
+Return full changed-file diff and hashes, concrete command/test evidence, new/updated record counts, source errors, next steps and GO/NO-GO for scheduled operation. Do the work, don't return another audit-only checklist.

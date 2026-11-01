@@ -1,0 +1,41 @@
+{
+  "before": {
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "by_source": {},
+    "checked": "consistent temporary backup; source opened read-only"
+  },
+  "result": {
+    "schema_version": 1,
+    "source": "TED",
+    "state": "error",
+    "pid": 9069,
+    "started": "2026-11-01T12:06:09.167054+00:00",
+    "finished": "2026-11-01T12:06:09.223008+00:00",
+    "mode": "delta",
+    "pages": 0,
+    "received": 0,
+    "valid": 0,
+    "inserted_unique": 0,
+    "updated_existing": 0,
+    "skipped": 0,
+    "saved": 0,
+    "retries": 0,
+    "last_request_at": "2026-11-01T12:06:09.167567+00:00",
+    "last_response_at": null,
+    "most_recent_successful_page": null,
+    "last_error": "TED connection/read failed",
+    "last_success_at": null,
+    "query": "form-type = competition AND publication-date >= 20261018",
+    "resumed": false,
+    "elapsed_seconds": 0.056,
+    "error": "TED connection/read failed"
+  },
+  "after": {
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "by_source": {},
+    "checked": "consistent temporary backup; source opened read-only"
+  },
+  "production_database_touched": false
+}

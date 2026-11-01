@@ -1,0 +1,11 @@
+[
+  {
+    "id": "FR_EXAMPLE_ATOM",
+    "url": "https://example.org/official-feed.atom",
+    "country": "FR",
+    "region": "",
+    "buyer": "",
+    "max_items": 1000,
+    "enabled": false
+  }
+]

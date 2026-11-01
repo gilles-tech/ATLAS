@@ -1,0 +1,16 @@
+{
+  "archive_sha256": "84222bb342a8103dd3212914e292a01a7bd5b87fda9c98cae1f650395315f508",
+  "files": {
+    "sync_engine.py": "67ba0d633dc907bb891c7815aa41bf2faec85c1a6157d468fd0bc2c6daa623c5",
+    "sources.json": "8658c8b0aa8823d3abe94185b12be1b39c85f679b4be49df355f19c8ce6da1e8",
+    "buyers.json": "f70a29bcfab0fca9855bf686dad84fc1f471a9453ad4871a63be550d0a9947ef",
+    "install.sh": "25cfbd88bc1d7bfb7cb00d49ed00464590c7f90d8bd860c5e8a5ab4fb1c34a6d",
+    "sync_daily.py": "8857e781965c1867600d26df5af1cf16afcc77e5fbfab53dd2a3a65c2eb9a538",
+    "eu_ft.py": "7a310baddc1ded56b9f19a6f891cd2da74991fd08ca7c63ac8f5d161c0044f9f",
+    "approch.py": "69f8abf7997bebd13648a48f3413c421d731e8e2d374722fab8a4f04d1fa5be5",
+    "app.py": "3e2b89cd9c19bebc1632f2338887753eef894760d21cbed76c53d4d85aa9d8b2",
+    "feeds.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "access_registry.json": "25807d6ad21b5113ff9213a4019c4fb5477a254c1e7ce9814e2f49950a07265c",
+    "static/index.html": "edcbc4cb2de8691b0d589d2a23818aea7e6174f787b0930cbf3e1c19944a64fc"
+  }
+}

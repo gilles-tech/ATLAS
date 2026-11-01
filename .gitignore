@@ -1,0 +1,12 @@
+__pycache__/
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+.local/
+.venv/
+*.collector.lock
+build/
+dist/
+release/
+*.spec

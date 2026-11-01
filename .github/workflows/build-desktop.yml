@@ -1,0 +1,42 @@
+name: Build Atlas Marches desktop installers
+on:
+  workflow_dispatch:
+  push:
+    tags: ['desktop-v*']
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: macos-arm64
+          - os: windows-2022
+            label: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install desktop dependencies
+        run: python -m pip install -r requirements-desktop.txt
+      - name: Build native executable
+        run: python packaging/build.py
+      - name: Build Mac DMG
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release
+          hdiutil create -volname 'Atlas Marches' -srcfolder dist/AtlasMarches.app -ov -format UDZO release/AtlasMarches-macOS-AppleSilicon.dmg
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows.iss'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AtlasMarches-${{ matrix.label }}
+          path: release/*

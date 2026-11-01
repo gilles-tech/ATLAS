@@ -1,0 +1,120 @@
+{
+  "mode": "isolated synthetic HTTP adapters; no live calls",
+  "before": {
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "by_source": {},
+    "checked": "consistent temporary backup; source opened read-only"
+  },
+  "sync": {
+    "schema_version": 1,
+    "started": "2026-11-01T12:13:10.740626+00:00",
+    "finished": "2026-11-01T12:13:10.745701+00:00",
+    "status": "completed",
+    "state": "completed",
+    "pid": 9496,
+    "database": "/tmp/atlas-final-fixture-j_r0h9sy/atlas.db",
+    "current_source": "TED",
+    "page": 2,
+    "sources": {
+      "BOAMP": {
+        "status": "ok",
+        "duration_seconds": 0.001,
+        "result": {
+          "source": "BOAMP",
+          "count": 1,
+          "status": "ok"
+        }
+      },
+      "TED": {
+        "status": "completed",
+        "duration_seconds": 0.003,
+        "result": {
+          "schema_version": 1,
+          "source": "TED",
+          "state": "completed",
+          "pid": 9496,
+          "started": "2026-11-01T12:13:10.742584+00:00",
+          "finished": "2026-11-01T12:13:10.744981+00:00",
+          "mode": "delta",
+          "pages": 2,
+          "received": 3,
+          "valid": 3,
+          "inserted_unique": 2,
+          "updated_existing": 1,
+          "skipped": 0,
+          "saved": 3,
+          "retries": 0,
+          "last_request_at": "2026-11-01T12:13:10.743954+00:00",
+          "last_response_at": "2026-11-01T12:13:10.744224+00:00",
+          "most_recent_successful_page": 2,
+          "last_error": null,
+          "last_success_at": "2026-11-01T12:13:10.742584+00:00",
+          "total": null,
+          "query": "form-type = competition AND publication-date >= 20261018",
+          "resumed": false,
+          "elapsed_seconds": 0.002,
+          "error": ""
+        }
+      }
+    },
+    "source_failures": {},
+    "catalog_count": 83,
+    "enabled_feeds": [],
+    "notes": [
+      "APProch and EU Funding adapters deferred to a separate validation lane; not marked successful.",
+      "Aucun flux RSS/Atom suppl\u00e9mentaire activ\u00e9 : feeds.json est vide ou d\u00e9sactiv\u00e9."
+    ],
+    "last_success_at": "2026-11-01T12:13:10.745698+00:00",
+    "before": {
+      "total": 0,
+      "by_source": {},
+      "latest_retrieved": null
+    },
+    "deferred_sources": [
+      "APPROCH",
+      "EU_FT_TENDERS",
+      "EU_FT_GRANTS"
+    ],
+    "progress_snapshot": {
+      "total": 3,
+      "by_source": {
+        "BOAMP": 1,
+        "TED": 2
+      },
+      "latest_retrieved": "2026-11-01T12:13:10.744252+00:00"
+    },
+    "received": 3,
+    "valid": 3,
+    "inserted_unique": 2,
+    "updated_existing": 1,
+    "skipped": 0,
+    "retries": 0,
+    "last_request_at": "2026-11-01T12:13:10.743954+00:00",
+    "last_response_at": "2026-11-01T12:13:10.744224+00:00",
+    "most_recent_successful_page": 2,
+    "last_error": null,
+    "after": {
+      "total": 3,
+      "by_source": {
+        "BOAMP": 1,
+        "TED": 2
+      },
+      "latest_retrieved": "2026-11-01T12:13:10.744252+00:00"
+    },
+    "new_unique_records": 3,
+    "delta_by_source": {
+      "TED": 2,
+      "BOAMP": 1
+    }
+  },
+  "after": {
+    "sqlite_integrity": "ok",
+    "fts5_integrity": "ok",
+    "by_source": {
+      "BOAMP": 1,
+      "TED": 2
+    },
+    "checked": "consistent temporary backup; source opened read-only"
+  }
+}
