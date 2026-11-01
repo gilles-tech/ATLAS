@@ -39,7 +39,7 @@ def _run(app, state_file, include_feeds, include_optional, cancel):
     state = dict(schema_version=1, started=utc(), finished=None, status='running', state='running',
                  pid=os.getpid(), database=str(app.DB), current_source=None, page=0,
                  sources={}, source_failures={}, catalog_count=len(app.SOURCES),
-                 enabled_feeds=[], notes=[], last_success_at=None)
+                 enabled_feeds=[], notes=[], continuations={}, last_success_at=None)
     # Carry a successful full-run timestamp, never infer success from the clock alone.
     if state_file.exists():
         try:
@@ -99,7 +99,17 @@ def _run(app, state_file, include_feeds, include_optional, cancel):
                 outcome = result.get('status') or result.get('state') or 'unknown'
                 state['sources'][name] = dict(status=outcome,
                     duration_seconds=round(time.monotonic()-started, 3), result=result)
-                if outcome not in ('ok', 'completed'):
+                expected_ted_checkpoint = (
+                    name == 'TED' and outcome == 'partial'
+                    and result.get('last_error') == 'TED page limit reached; continuation checkpoint saved'
+                    and result.get('pages', 0) > 0
+                )
+                if expected_ted_checkpoint:
+                    state['continuations'][name] = {
+                        'status': 'checkpoint_saved', 'pages': result['pages'],
+                        'received': result.get('received', 0)
+                    }
+                elif outcome not in ('ok', 'completed'):
                     state['status'] = 'partial_error'
                     state['source_failures'][name] = result.get('last_error') or result.get('error') or result.get('message') or outcome
                 if outcome == 'interrupted':
@@ -112,8 +122,11 @@ def _run(app, state_file, include_feeds, include_optional, cancel):
             state['progress_snapshot'] = snapshot(app.DB)
             store()
         if state['status'] == 'running':
-            state['status'] = 'completed'
-            state['last_success_at'] = utc()
+            if state['continuations']:
+                state['status'] = 'continuation_pending'
+            else:
+                state['status'] = 'completed'
+                state['last_success_at'] = utc()
     except (KeyboardInterrupt, SystemExit):
         state['status'] = 'interrupted'
         state['last_error'] = 'Collection interrupted; committed pages remain resumable'
