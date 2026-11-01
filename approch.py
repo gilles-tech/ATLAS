@@ -49,7 +49,7 @@ def table_rows(data,ext):
 def field(row,*keys):
     # Harmonize Opendatasoft export labels and technical field identifiers.
     def canonical(value):
-        return ' '.join(re.findall(r'[a-z0-9]+', norm(value.replace('\\ufeff','').replace('_',' '))))
+        return ' '.join(re.findall(r'[a-z0-9]+', norm(value.replace('\ufeff','').replace('_',' '))))
     vals={canonical(k):v for k,v in row.items() if isinstance(k,str) and k}
     for key in keys:
         v=vals.get(canonical(key))
