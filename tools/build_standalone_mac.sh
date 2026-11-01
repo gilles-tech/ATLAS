@@ -22,15 +22,7 @@ if r.get('status')!='passed':
     raise SystemExit('ERROR: packaged self-check did not pass; release stopped')
 print('Standalone acceptance:',r['status'])
 PY
-ARCH="$(uname -m)"
-STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
-cp -R "$APP" "$STAGE/AtlasMarches.app"
-ln -s /Applications "$STAGE/Applications"
-DMG="$ROOT/release/AtlasMarches-macOS-$ARCH-unsigned.dmg"
-hdiutil create -volname "Atlas Marchés" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
-shasum -a 256 "$DMG" > "$DMG.sha256"
+bash "$ROOT/tools/package_existing_mac.sh"
 echo "DONE: $APP"
-echo "DONE: $DMG"
 echo "CHECK: $REPORT"
 echo "Unsigned / not notarized. Does not replace installed collector LaunchAgent."
