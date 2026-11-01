@@ -19,9 +19,9 @@ STATUS = DATA / 'desktop-sync-status.json'
 
 def sync():
     from sync_engine import run
-    report = run(app, Path(app.DB).parent / 'sync-status.json')
+    report = run(app, Path(app.DB).parent / 'sync-status.json', include_optional=True)
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
-    return 0 if report['status']=='completed' else 2 if report['status']=='already_running' else 1
+    return 0 if report['status'] in ('completed','continuation_pending') else 2 if report['status']=='already_running' else 1
 
 def available_port():
     with socket.socket() as sock:
@@ -46,7 +46,7 @@ def main():
     try:
         import webview
         webview.create_window('Atlas Marchés', f'http://127.0.0.1:{port}/index.html', width=1400, height=920, min_size=(940, 620))
-        # Recovery release: scheduling stays disabled until live acceptance gates pass.
+        # The installed collector LaunchAgent owns recurring updates. Never create a second scheduler.
         webview.start()
     finally:
         http.shutdown()
