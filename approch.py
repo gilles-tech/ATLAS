@@ -72,21 +72,24 @@ def convert(row):
                 'denomination_entite_acheteuse', 'nom_entite_acheteuse',
                 'organisation', 'nom_acheteur')
     link=field(row,'Lien vers la consultation','lien_vers_la_consultation','url')
+    if not buyer:
+        siren=field(row,'siren_de_l_entite_acheteuse','siren de l entite acheteuse')
+        buyer='SIREN '+siren if siren and siren.isdecimal() else ''
     if not title or not buyer:return None
-    raw_id=field(row,'id','identifiant','id_projet','recordid','reference')
+    raw_id=field(row,'id','identifiant','id_projet','recordid','reference','code')
     fingerprint=raw_id or hashlib.sha256((norm(title)+'|'+norm(buyer)+'|'+link).encode()).hexdigest()[:24]
     # Different projects may share a reference in different source systems; keep namespace.
     key='APPROCH-'+hashlib.sha256(str(fingerprint).encode()).hexdigest()[:28]
-    cpv=field(row,'Code(s) CPV','codes_cpv','cpv')
+    cpv=field(row,'Code(s) CPV','codes_cpv','cpv','code_s_cpv')
     category=field(row,"Catégorie d'achat",'categorie_achat','nature')
     return {'id':key,'source':SOURCE,'title':title,'description':field(row,'Description','description'),
-            'kind':'FUTURE_PROJECT','country':'FR','region':field(row,"Département(s) d'exécution du marché",'departement'),
+            'kind':'FUTURE_PROJECT','country':'FR','region':field(row,"Département(s) d'exécution du marché",'departement','departement_s_d_execution_du_marche'),
             'buyer':buyer,'cpv':cpv,'value':None,'currency':'EUR',
-            'published':iso_date(field(row,'Première mise en ligne','premiere_mise_en_ligne','date_publication')),
+            'published':iso_date(field(row,'Première mise en ligne','premiere_mise_en_ligne','date_publication','date_previsionnelle_de_publication')),
             'deadline':None, # Forecast dates are not confirmed bid deadlines
             'url':link or 'https://projets-achats.marches-publics.gouv.fr/',
             'stage':'future',
-            'raw':json.dumps({'original':row,'category':category,'forecast_publication':field(row,'Date cible de publication'),
+            'raw':json.dumps({'original':row,'category':category,'forecast_publication':field(row,'Date cible de publication','date_previsionnelle_de_publication'),
                   'forecast_submission':field(row,'Date cible de remise des offres'),
                   'portal_status':field(row,'Statut'),'exchange_status':field(row,"État de l'espace d'échanges")},ensure_ascii=False)}
 

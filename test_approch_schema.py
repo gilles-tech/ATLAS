@@ -12,6 +12,18 @@ class APProchSchemaTests(unittest.TestCase):
         self.assertEqual(item['kind'],'FUTURE_PROJECT')
         self.assertIsNone(item['deadline'])
         self.assertEqual(item['buyer'],'Ville Exemple')
+    def test_live_api_shape_has_stable_code_and_siren(self):
+        item=approch.convert({'code':12345, 'libelle':'Achat prévu',
+            'siren_de_l_entite_acheteuse': 123456789,
+            'date_previsionnelle_de_publication':'2027-03-15'})
+        self.assertEqual(item['buyer'],'SIREN 123456789')
+        self.assertEqual(item['kind'],'FUTURE_PROJECT')
+        self.assertIsNone(item['deadline'])
+        self.assertEqual(item['published'],'2027-03-15')
+        again=approch.convert({'code':12345, 'libelle':'Titre modifié',
+            'siren_de_l_entite_acheteuse':123456789})
+        self.assertEqual(item['id'],again['id'])
+
     def test_labelled_names(self):
         item=approch.convert({'Libellé':'Projet de services','Nom de l’entité acheteuse':'Ministère Exemple'})
         self.assertIsNotNone(item)

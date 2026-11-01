@@ -13,6 +13,20 @@ class EUFTTests(unittest.TestCase):
         self.assertIn('boundary=',mime)
     def test_normalize_reject_missing(self):
         self.assertIsNone(normalize({'title':'No identifier'}, 'tenders'))
+    def test_live_wrapper_with_metadata(self):
+        item=normalize({'reference':'CALL-2026-01','url':'https://example.eu/call',
+            'metadata':{'title':'European research call'}},'grants')
+        self.assertIsNotNone(item)
+        self.assertEqual(item['title'],'European research call')
+        self.assertEqual(item['reference'],'CALL-2026-01')
+    def test_content_json_source(self):
+        item=normalize({'reference':'CALL-2026-02','content':'{"title":"Procurement"}',
+            'url':'https://example.eu/procurement'},'tenders')
+        self.assertEqual(item['title'],'Procurement')
+    def test_plain_content_without_title_is_not_fabricated(self):
+        self.assertIsNone(normalize({'reference':'CALL-2026-03',
+            'content':'just a search index excerpt'},'tenders'))
+
     def test_upsert_and_separate_storage(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/'atlas.db'

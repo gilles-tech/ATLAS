@@ -78,30 +78,55 @@ def value(record, *keys):
     return ''
 
 
+def documents(record):
+    """Explicit supported wrappers from SEDIA results; never mistake an arbitrary
+    plain-text excerpt for a structured title or identifier."""
+    result=[record]
+    for key in ('_source','source','metadata','enrichedMetadata'):
+        entry=record.get(key)
+        if isinstance(entry,dict):
+            result.append(entry)
+    content=record.get('content')
+    if isinstance(content,str) and content.lstrip().startswith('{'):
+        try:
+            doc=json.loads(content)
+            if isinstance(doc,dict):result.append(doc)
+        except ValueError:
+            pass
+    return result
+
+
+def structured_value(record,*keys):
+    for doc in documents(record):
+        direct=value(doc,*keys)
+        if direct:return direct
+        for container in ('metadata','enrichedMetadata'):
+            nested=doc.get(container)
+            if isinstance(nested,dict):
+                candidate=value(nested,*keys)
+                if candidate:return candidate
+    return ''
+
+
 def normalize(record, kind):
-    if not isinstance(record, dict):
-        return None
-    # Search results may nest the structured source document.
-    doc = record.get('_source') or record.get('source') or record
-    if not isinstance(doc, dict):
-        doc = record
-    identifier = value(doc, 'identifier', 'topicIdentifier', 'callIdentifier', 'reference')
-    if not identifier:
-        identifier = value(record, 'identifier', 'topicIdentifier', 'callIdentifier', 'reference')
-    title = value(doc, 'title', 'topicTitle', 'name', 'description')
-    if not identifier or not title:
-        return None
-    url = value(doc, 'url', 'portalUrl', 'link', 'topicUrl')
+    if not isinstance(record,dict):return None
+    identifier=structured_value(record,'identifier','topicIdentifier','callIdentifier',
+                                'reference','topicId','id')
+    title=structured_value(record,'title','topicTitle','name','callTitle','topicName')
+    # An API result may supply a valid reference but only an unstructured summary.
+    # Do not fabricate a title or silently count this as an imported opportunity.
+    if not identifier or not title:return None
+    url=structured_value(record,'url','portalUrl','link','topicUrl')
     if not url.startswith('https://'):
-        url = PORTAL + identifier if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{3,199}',identifier) else ''
-    if not url.startswith('https://'):
-        return None
-    return {'id':f'EU_FT_{kind.upper()}:{identifier}', 'kind':kind, 'reference': identifier,
-            'title':title, 'summary':value(doc,'shortDescription','description','abstract'),
-            'status_raw': value(doc,'status','statusCode'),
-            'deadline':value(doc,'deadline','deadlineDate','submissionDeadline'),
-            'published':value(doc,'publicationDate','openingDate','startDate'),
-            'url':url, 'raw':json.dumps(record,ensure_ascii=False)}
+        url=PORTAL+identifier if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{3,199}',identifier) else ''
+    if not url.startswith('https://'):return None
+    return {'id':f'EU_FT_{kind.upper()}:{identifier}', 'kind':kind,
+            'reference':identifier,'title':title,
+            'summary':structured_value(record,'shortDescription','description','abstract'),
+            'status_raw':structured_value(record,'status','statusCode'),
+            'deadline':structured_value(record,'deadline','deadlineDate','submissionDeadline'),
+            'published':structured_value(record,'publicationDate','openingDate','startDate'),
+            'url':url,'raw':json.dumps(record,ensure_ascii=False)}
 
 
 def install(db):
