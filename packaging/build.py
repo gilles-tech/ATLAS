@@ -14,7 +14,7 @@ cmd = [sys.executable, '-m', 'PyInstaller', '--clean', '--noconfirm',
        '--add-data', f'{root / "static"}{sep}static']
 for name in ['sources.json','buyers.json','feeds.json','access_registry.json']:
     cmd.extend(['--add-data', f'{root / name}{sep}.'])
-cmd.extend(['--hidden-import', 'desktop_autosync'])
+cmd.extend(['--hidden-import', 'desktop_autosync', '--hidden-import', 'standalone_check', '--hidden-import', 'maintenance', '--hidden-import', 'sync_engine'])
 cmd.extend(['--hidden-import', 'ted_collector', '--hidden-import', 'collector_runtime'])
 cmd.append(str(root / 'desktop.py'))
 print('Building on', platform.platform(), flush=True)
