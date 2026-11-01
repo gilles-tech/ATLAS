@@ -47,7 +47,8 @@ def table_rows(data,ext):
     return list(csv.DictReader(io.StringIO(text),dialect=dialect))
 
 def field(row,*keys):
-    vals={norm(k).replace('_',' ').strip():v for k,v in row.items() if k}
+    # Opendatasoft CSV may use label names, technical field names or BOM prefixes.
+    vals={norm(k).replace('_',' ').replace('\ufeff','').strip():v for k,v in row.items() if k}
     for key in keys:
         v=vals.get(norm(key).replace('_',' ').strip())
         if v is not None and str(v).strip() not in ('','27','None','null'):return str(v).strip()
@@ -62,8 +63,11 @@ def iso_date(s):
     return None
 
 def convert(row):
-    title=field(row,'Libellé','libelle','titre','title','objet')
-    buyer=field(row,'Entité acheteuse','entite_acheteuse','acheteur')
+    title=field(row,'Libellé','libelle','titre','title','objet', 'libellé du projet', 'nom du projet')
+    buyer=field(row,'Entité acheteuse','entite_acheteuse','acheteur',
+                "Nom de l'entité acheteuse", 'Nom de l entité acheteuse',
+                'denomination_entite_acheteuse', 'nom_entite_acheteuse',
+                'organisation', 'nom_acheteur')
     link=field(row,'Lien vers la consultation','lien_vers_la_consultation','url')
     if not title or not buyer:return None
     raw_id=field(row,'id','identifiant','id_projet','recordid','reference')
@@ -96,7 +100,10 @@ def ingest(connect,source_file=None):
         rows=table_rows(payload,'.csv')
     now=datetime.now(timezone.utc).isoformat()
     valid=[o for row in rows if (o:=convert(row))]
-    if not valid:raise ValueError('Aucun projet APProch valide dans la réponse; source non importée')
+    if not valid:
+        headers=sorted({str(k).replace('\ufeff','')[:80] for row in rows[:3] for k in row if k})
+        raise ValueError('Aucun projet APProch valide; rows=' + str(len(rows)) +
+                         '; colonnes=' + repr(headers[:40]) + '; aucune écriture')
     new=0
     with connect() as c:
         for o in valid:
