@@ -53,6 +53,12 @@ def main():
         if check.execute("PRAGMA integrity_check").fetchone()[0]!="ok": stop("Backup integrity failed")
         if check.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0]!=count:
             stop("Backup count mismatch")
+    # SQLite integrity_check does not validate FTS5 external-content postings.
+    with sqlite3.connect(backup/"atlas.db") as fts:
+        try:
+            fts.execute("INSERT INTO opportunities_fts(opportunities_fts,rank) VALUES ('integrity-check',1)")
+        except sqlite3.DatabaseError as exc:
+            stop("FTS5 consistency failed on backup: " + str(exc))
     previous = backup/"prior-code"
     previous.mkdir()
     for name in FILES:
