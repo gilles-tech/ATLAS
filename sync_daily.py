@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     report = run(app, Path(app.DB).parent / 'sync-status.json', include_optional=not args.skip_optional)
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
-    return 0 if report['status'] == 'completed' else 2 if report['status'] == 'already_running' else 1
+    return 0 if report['status'] in ('completed', 'continuation_pending') else 2 if report['status'] == 'already_running' else 1
 
 
 if __name__ == '__main__':
