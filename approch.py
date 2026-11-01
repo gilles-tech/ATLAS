@@ -47,11 +47,14 @@ def table_rows(data,ext):
     return list(csv.DictReader(io.StringIO(text),dialect=dialect))
 
 def field(row,*keys):
-    # Opendatasoft CSV may use label names, technical field names or BOM prefixes.
-    vals={norm(k).replace('_',' ').replace('\ufeff','').strip():v for k,v in row.items() if k}
+    # Harmonize Opendatasoft export labels and technical field identifiers.
+    def canonical(value):
+        return ' '.join(re.findall(r'[a-z0-9]+', norm(value.replace('\\ufeff','').replace('_',' '))))
+    vals={canonical(k):v for k,v in row.items() if isinstance(k,str) and k}
     for key in keys:
-        v=vals.get(norm(key).replace('_',' ').strip())
-        if v is not None and str(v).strip() not in ('','27','None','null'):return str(v).strip()
+        v=vals.get(canonical(key))
+        if v is not None and str(v).strip() not in ('','27','None','null'):
+            return str(v).strip()
     return ''
 
 def iso_date(s):
